@@ -1,0 +1,3 @@
+[submodule "backbone-indexeddb"]
+	path = backbone-indexeddb
+	url = https://github.com/kilbot/Backbone-IndexedDB
