@@ -1,5 +1,11 @@
 describe('Backbone.DualCollection', function () {
 
+  beforeEach(function() {
+    this.server = sinon.fakeServer.create();
+    this.server.autoRespond = true;
+    this.server.autoRespondAfter = 400;
+  });
+
   it('should be in a valid state', function() {
     var collection = new Backbone.DualCollection();
     expect( collection).to.be.ok;
@@ -11,6 +17,7 @@ describe('Backbone.DualCollection', function () {
     collection.create({ foo: 'bar' }, {
       wait: true,
       special: true,
+      error: done,
       success: function( model, response, options ){
         expect( model.isNew() ).to.be.false;
         expect( model.id ).to.equal( response.local_id );
@@ -21,6 +28,7 @@ describe('Backbone.DualCollection', function () {
         collection.fetch({
           reset: true,
           special: true,
+          error: done,
           success: function( collection, response, options ){
             expect( collection.at(0).attributes ).to.eql( model.attributes );
             expect( response ).to.eql( [ model.attributes ] );
@@ -41,6 +49,7 @@ describe('Backbone.DualCollection', function () {
       success: function( model, response, options ){
         model.save({ foo: 'baz' }, {
           special: true,
+          error: done,
           success: function( model, response, options ){
             expect( model.get('_state') ).to.equal( collection.states.create );
             expect( model.get('foo') ).to.equal( 'baz' );
@@ -50,6 +59,7 @@ describe('Backbone.DualCollection', function () {
             collection.fetch({
               reset: true,
               special: true,
+              error: done,
               success: function( collection, response, options ){
                 expect( collection.at(0).attributes ).eqls( model.attributes );
                 expect( response ).to.eql( [ model.attributes ] );
@@ -66,31 +76,20 @@ describe('Backbone.DualCollection', function () {
 
   it('should create to local and remote with \'remote: true\' option', function( done ){
 
-    // mock bb.ajax
-    Backbone.ajax = function( options ){
-      options = options || {};
-      expect( options.type ).to.equal('POST');
-      var dfd = $.Deferred();
-      _.delay( function(){
-        var resp = {
-          foo: 'bar',
-          id: 1
-        };
-        if( options.success ){
-          options.success(resp);
-        }
-        dfd.resolve(resp);
-      }, 50 );
-      return dfd;
-    };
+    // mock server response
+    var response = JSON.stringify({ id: 1, foo: 'bar' });
+    this.server.respondWith( 'POST', '/test', [200, {"Content-Type": "application/json"},
+      response
+    ]);
 
     var collection = new Backbone.DualCollection();
-    collection.url = 'test';
+    collection.url = '/test';
 
     collection.create({ foo: 'bar' }, {
       wait: true,
       remote: true,
       special: true,
+      error: done,
       success: function( model, response, options ){
         expect( model.isNew() ).to.be.false;
         expect( model.get('id') ).to.equal( 1 );
@@ -101,6 +100,7 @@ describe('Backbone.DualCollection', function () {
         collection.fetch({
           reset: true,
           special: true,
+          error: done,
           success: function( collection, response, options ){
             expect( collection.at(0).attributes ).to.eql( model.attributes );
             expect( response ).to.eql( [ model.attributes ] );
@@ -115,29 +115,18 @@ describe('Backbone.DualCollection', function () {
 
   it('should update to local and remote with \'remote: true\' option', function( done ){
 
-    // mock bb.ajax
-    Backbone.ajax = function( options ){
-      options = options || {};
-      expect( options.type ).to.equal('PUT');
-      var dfd = $.Deferred();
-      _.delay( function(){
-        var resp = {
-          foo: 'baz',
-          id: 2
-        };
-        if( options.success ){
-          options.success(resp);
-        }
-        dfd.resolve(resp);
-      }, 50 );
-      return dfd;
-    };
+    // mock server response
+    var response = JSON.stringify({ id: 2, foo: 'baz' });
+    this.server.respondWith( 'PUT', '/test/2/', [200, {"Content-Type": "application/json"},
+      response
+    ]);
 
     var collection = new Backbone.DualCollection();
-    collection.url = 'http://test';
+    collection.url = '/test';
 
     collection.create({ id: 2, foo: 'bar' }, {
       wait: true,
+      error: done,
       success: function( model, response, options ){
         expect( model.isNew() ).to.be.false;
         expect( model.get('_state') ).to.equal( collection.states.update );
@@ -146,6 +135,7 @@ describe('Backbone.DualCollection', function () {
           remote: true,
           wait: true,
           special: true,
+          error: done,
           success: function( model, response, options ){
             expect( model.get('_state') ).to.be.undefined;
             expect( model.get('foo') ).to.equal( 'baz' );
@@ -155,6 +145,7 @@ describe('Backbone.DualCollection', function () {
             collection.fetch({
               reset: true,
               special: true,
+              error: done,
               success: function( collection, response, options ){
                 expect( collection.at(0).attributes ).to.eql( model.attributes );
                 expect( response ).to.eql( [ model.attributes ] );
@@ -171,26 +162,21 @@ describe('Backbone.DualCollection', function () {
 
   it('model should be compatible with nested APIs', function( done ){
 
-    var ajaxResponse = {
-      'test': { foo: 'bar' }
-    };
-
-    // mock bb.ajax
-    Backbone.ajax = function( options ){
-      options = options || {};
-      var payload = JSON.parse( options.data );
-      expect( Object.keys(payload) ).to.eql(['test'] );
-      return ajaxResponse;
-    };
+    // mock server response
+    var response = JSON.stringify({ test: { foo: 'bar' } });
+    this.server.respondWith( 'POST', '/test', [200, {"Content-Type": "application/json"},
+      response
+    ]);
 
     var collection = new Backbone.DualCollection();
-    collection.url = 'http://test';
+    collection.url = '/test';
 
     var model = collection.add({ foo: 'bar' });
     model.name = 'test';
     model.save({}, {
       remote: true,
       special: true,
+      error: done,
       success: function( m, response, options ){
         expect( m ).eqls( model );
 
@@ -206,43 +192,29 @@ describe('Backbone.DualCollection', function () {
 
   it('should fetch and merge a remote collection', function( done ){
 
-    var count = 1;
-    var resp1 = [
-      { id: 1, foo: 'bar' },
-      { id: 2, foo: 'baz' },
-      { id: 3, foo: 'boo' }
-    ];
-    var resp2 = {
-        nested: [
+    // mock server response
+    var response = JSON.stringify({
+      nested: [
         { id: 1, foo: 'bar' },
         { id: 3, foo: 'baz' },
         { id: 4, foo: 'boo' }
       ]
-    };
-
-    // mock bb.ajax
-    Backbone.ajax = function( options ){
-      options = options || {};
-      expect( options.type ).to.equal('GET');
-      var dfd = $.Deferred();
-      _.delay( function(){
-        var resp = count === 1 ? resp1 : resp2;
-        count++;
-        if( options.success ){
-          options.success(resp);
-        }
-        dfd.resolve(resp);
-      }, 50 );
-      return dfd;
-    };
+    });
+    this.server.respondWith( 'GET', '/test', [200, {"Content-Type": "application/json"},
+      response
+    ]);
 
     var collection = new Backbone.DualCollection();
-    collection.url = 'http://test';
+    collection.url = '/test';
     collection.name = 'nested';
 
-    collection.fetch({
-      remote: true,
+    collection.saveBatch([
+      { id: 1, foo: 'bar' },
+      { id: 2, foo: 'baz' },
+      { id: 3, foo: 'boo' }
+    ], {
       special: true,
+      error: done,
       success: function( collection, response, options ){
         expect( collection ).to.have.length( 3 );
         expect( collection.map('local_id') ).to.not.be.empty;
@@ -252,6 +224,7 @@ describe('Backbone.DualCollection', function () {
         collection.fetch({
           remote: true,
           special: true,
+          error: done,
           success: function( collection, response, options ){
             expect( collection ).to.have.length( 4 );
             expect( collection.map('local_id') ).to.not.be.empty;
@@ -268,31 +241,19 @@ describe('Backbone.DualCollection', function () {
 
   it('should fetch all remote ids', function( done ){
 
-    // mock bb.ajax
-    Backbone.ajax = function( options ){
-      options = options || {};
-      expect( options.type ).to.equal('GET');
-      var dfd = $.Deferred();
-      _.delay( function(){
-        var resp = {
-          nested: [
-            { id: 1 }, { id: 2 }, { id: 3 }
-          ]
-        };
-        if( options.success ){
-          options.success(resp);
-        }
-        dfd.resolve(resp);
-      }, 50 );
-      return dfd;
-    };
+    // mock server response
+    var response = JSON.stringify({ nested: [{ id: 1 }, { id: 2 }, { id: 3 }] });
+    this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
+      response
+    ]);
 
     var collection = new Backbone.DualCollection();
-    collection.url = 'http://test';
+    collection.url = '/test';
     collection.name = 'nested';
 
     collection.fetchRemoteIds(null, {
       special: true,
+      error: done,
       success: function( collection, response, options ){
         expect( collection ).to.have.length( 3 );
         expect( collection.map('local_id') ).to.not.be.empty;
@@ -308,27 +269,14 @@ describe('Backbone.DualCollection', function () {
 
   it('should fetch and merge all remote ids', function( done ){
 
-    // mock bb.ajax
-    Backbone.ajax = function( options ){
-      options = options || {};
-      expect( options.type ).to.equal('GET');
-      var dfd = $.Deferred();
-      _.delay( function(){
-        var resp = {
-          nested: [
-            { id: 1 }, { id: 2 }, { id: 3 }
-          ]
-        };
-        if( options.success ){
-          options.success(resp);
-        }
-        dfd.resolve(resp);
-      }, 50 );
-      return dfd;
-    };
+    // mock server response
+    var response = JSON.stringify({ nested: [{ id: 1 }, { id: 2 }, { id: 3 }] });
+    this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
+      response
+    ]);
 
     var collection = new Backbone.DualCollection();
-    collection.url = 'http://test';
+    collection.url = '/test';
     collection.name = 'nested';
 
     collection.saveBatch([
@@ -339,6 +287,7 @@ describe('Backbone.DualCollection', function () {
 
       collection.fetchUpdatedIds({
         special: true,
+        error: done,
         success: function( collection, response, options ){
           expect( collection ).to.have.length( 3 );
 
@@ -348,6 +297,7 @@ describe('Backbone.DualCollection', function () {
 
           collection.fetch({
             reset: true,
+            error: done,
             success: function( collection ){
               var model = collection.findWhere({ id: 1 });
               expect( model.get('foo') ).equals('bar');
@@ -365,28 +315,19 @@ describe('Backbone.DualCollection', function () {
 
   it('should fetch updated ids from the server', function( done ){
 
-    // mock bb.ajax
-    Backbone.ajax = function( options ){
-      options = options || {};
-      expect( options.type ).to.equal('GET');
-      var dfd = $.Deferred();
-      _.delay( function(){
-        var resp = {
-          nested: [
-            { id: 2, last_updated: '2016-01-14T13:15:04Z' },
-            { id: 4, last_updated: '2016-01-12T13:15:04Z' }
-          ]
-        };
-        if( options.success ){
-          options.success(resp);
-        }
-        dfd.resolve(resp);
-      }, 50 );
-      return dfd;
-    };
+    // mock server response
+    var response = JSON.stringify({
+      nested: [
+        { id: 2, last_updated: '2016-01-14T13:15:04Z' },
+        { id: 4, last_updated: '2016-01-12T13:15:04Z' }
+      ]
+    });
+    this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
+      response
+    ]);
 
     var collection = new Backbone.DualCollection();
-    collection.url = 'http://test';
+    collection.url = '/test';
     collection.name = 'nested';
 
     collection.saveBatch([
@@ -398,6 +339,7 @@ describe('Backbone.DualCollection', function () {
 
       collection.fetchUpdatedIds({
         special: true,
+        error: done,
         success: function( collection, response, options ){
           expect( collection ).to.have.length( 4 );
           var read = collection.states.read;
@@ -414,28 +356,14 @@ describe('Backbone.DualCollection', function () {
 
   it('should remove garbage', function( done ){
 
-    // mock bb.ajax
-    Backbone.ajax = function( options ){
-      options = options || {};
-      expect( options.type ).to.equal('GET');
-      var dfd = $.Deferred();
-      _.delay( function(){
-        var resp = {
-          nested: [
-            { id: 1 },
-            { id: 4 }
-          ]
-        };
-        if( options.success ){
-          options.success(resp);
-        }
-        dfd.resolve(resp);
-      }, 50 );
-      return dfd;
-    };
+    // mock server response
+    var response = JSON.stringify({ nested: [ { id: 1 }, { id: 4 } ] });
+    this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
+      response
+    ]);
 
     var collection = new Backbone.DualCollection();
-    collection.url = 'http://test';
+    collection.url = '/test';
     collection.name = 'nested';
 
     collection.saveBatch([
@@ -448,6 +376,7 @@ describe('Backbone.DualCollection', function () {
 
       collection.fetchRemoteIds(null, {
         remove: true,
+        error: done,
         success: function(){
           expect( collection ).to.have.length( 3 );
           var create = collection.states.create;
@@ -464,9 +393,10 @@ describe('Backbone.DualCollection', function () {
   /**
    * Clear test database
    */
-  afterEach(function() {
+  afterEach(function( done ) {
+    this.server.restore();
     var collection = new Backbone.DualCollection();
-    collection.clear();
+    collection.clear().then( done );
   });
 
   /**

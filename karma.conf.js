@@ -2,7 +2,7 @@ module.exports = function (config) {
   var customLaunchers = require('./test/browsers');
 
   var configuration = {
-    frameworks: ['mocha', 'chai'],
+    frameworks: ['mocha', 'sinon-chai'],
 
     files: [
       'node_modules/jquery/dist/jquery.js',
@@ -22,6 +22,7 @@ module.exports = function (config) {
     plugins: [
       'karma-mocha',
       'karma-chai',
+      'karma-sinon-chai',
       'karma-mocha-reporter',
       'karma-sauce-launcher'
     ],
@@ -34,7 +35,14 @@ module.exports = function (config) {
       },
     },
     captureTimeout: 120000,
-    customLaunchers: customLaunchers
+    customLaunchers: customLaunchers,
+
+    // chai config
+    client: {
+      chai: {
+        includeStack: true
+      }
+    }
   };
 
   if (process.env.TRAVIS) {
