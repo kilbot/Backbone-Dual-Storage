@@ -33,16 +33,13 @@ module.exports = bb.DualModel = IDBModel.extend({
       success: false
     });
     return bb.sync.call( this, method, model, opts )
-      .then( function( resp ){
-        resp = options.parse ? model.parse(resp, options) : resp;
-        model.set( resp );
+      .then( function(){
         var remoteMethod = self.getRemoteMethod();
         opts.remote = true;
         return bb.sync.call( self, remoteMethod, model, opts );
       })
       .then( function( resp ){
         resp = options.parse ? model.parse(resp, options) : resp;
-        resp = _.extend( {}, resp, { _state: undefined } );
         model.set( resp );
         opts.remote = false;
         opts.success = options.success;
@@ -81,7 +78,10 @@ module.exports = bb.DualModel = IDBModel.extend({
   },
 
   parse: function( resp, options ) {
-    resp = resp && resp[this.name] ? resp[this.name] : resp;
+    if( options.remote ){
+      resp = resp && resp[this.name] ? resp[this.name] : resp;
+      resp._state = undefined;
+    }
     return IDBModel.prototype.parse.call( this, resp, options );
   }
 

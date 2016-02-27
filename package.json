@@ -26,8 +26,7 @@
   "homepage": "https://github.com/kilbot/Backbone-Dual-Storage#readme",
   "dependencies": {
     "backbone": "^1.2.3",
-    "idb-wrapper": "^1.6.1",
-    "jquery": "^2.2.0",
+    "jquery": "^3.0.0-beta1",
     "lodash": "^4.3.0"
   },
   "devDependencies": {

@@ -8,7 +8,6 @@ module.exports = function (config) {
       'node_modules/jquery/dist/jquery.js',
       'node_modules/lodash/lodash.js',
       'node_modules/backbone/backbone.js',
-      'node_modules/idb-wrapper/idbstore.js',
       'dist/backbone-dual-storage.js',
       'test/spec.js'
     ],

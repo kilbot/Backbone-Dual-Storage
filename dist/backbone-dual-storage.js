@@ -79,31 +79,33 @@
 	module.exports = function(method, entity, options) {
 	  options = options || {};
 	  var isModel = entity instanceof bb.Model;
+	  var data = entity.toJSON();
 
 	  return entity.db.open()
 	    .then(function(){
 	      switch(method){
 	        case 'read':
 	          if( isModel ){
-	            return entity.db.get(entity);
+	            return entity.db.get( entity.id, options );
 	          }
-	          return entity.db.getAll();
+	          return entity.db.getAll( options );
 	        case 'create':
-	          return entity.db.update(entity);
+	          return entity.db.put( data, options );
 	        case 'update':
-	          return entity.db.update(entity);
+	          return entity.db.put( data, options );
 	        case 'delete':
 	          if( isModel ){
-	            return entity.db.destroy(entity);
+	            return entity.db.delete( entity.id, options );
 	          }
+	          return;
 	      }
 	    })
-	    .done(function(resp){
+	    .then(function(resp){
 	      if(options.success){
 	        options.success(resp);
 	      }
 	    })
-	    .fail(function(resp){
+	    .catch(function(resp){
 	      if( options.error ){
 	        options.error(resp);
 	      }
@@ -118,8 +120,8 @@
 
 	var bb = __webpack_require__(1);
 	var IDBCollection = __webpack_require__(5);
-	var DualModel = __webpack_require__(11);
-	var _ = __webpack_require__(9);
+	var DualModel = __webpack_require__(9);
+	var _ = __webpack_require__(7);
 
 	module.exports = bb.DualCollection = IDBCollection.extend({
 
@@ -127,8 +129,7 @@
 
 	  keyPath: 'local_id',
 
-	  indexes       : [
-	    {name: 'local_id', keyPath: 'local_id', unique: true},
+	  indexes: [
 	    {name: 'id', keyPath: 'id', unique: true}
 	  ],
 
@@ -139,6 +140,24 @@
 	    'create' : 'CREATE_FAILED',
 	    'delete' : 'DELETE_FAILED',
 	    'read'   : 'READ_FAILED'
+	  },
+
+	  toJSON: function( options ){
+	    options = options || {};
+	    var json = IDBCollection.prototype.toJSON.apply( this, arguments );
+	    if( options.remote && this.name ) {
+	      var nested = {};
+	      nested[this.name] = json;
+	      return nested;
+	    }
+	    return json;
+	  },
+
+	  parse: function( resp, options ) {
+	    if( options.remote ){
+	      resp = resp && resp[this.name] ? resp[this.name] : resp;
+	    }
+	    return IDBCollection.prototype.parse.call( this, resp, options );
 	  },
 
 	  fetch: function( options ){
@@ -161,79 +180,85 @@
 	    return this.sync('read', this, opts)
 	      .then( function( response ){
 	        response = self.parse( response, opts );
-	        if( ! options.remove ){
-	          opts.success = options.success;
-	        }
-	        return self.saveLocalBatch( response, opts );
+	        return self.putBatch( response, {
+	          index: 'id'
+	        });
 	      })
-	      .then( function( response ){
-	        if( options.remove ){
-	          var ids = _.map( response, 'id' );
-	          return self.removeGarbage( ids, options );
+	      .then(function(response){
+	        self.set(response, {remove: false});
+	        if( options.success ){
+	          options.success.call( options.context, self, response, options );
 	        }
+	        return response;
 	      });
+	      //.then( function( response ){
+	        //if( options.remove ){
+	        //  var ids = _.map( response, 'id' );
+	        //  return self.removeGarbage( ids, options );
+	        //}
+	      //});
 	  },
 
-	  saveBatch: function( models, options ){
-	    options = options || {};
-	    if( options.remote ){
-	      return this.saveRemoteBatch( models, options );
-	    }
-	    return this.saveLocalBatch( models, options );
-	  },
-
-	  saveLocalBatch: function( models, options ){
-	    models = _.map( models, function( model ){
-	      if( model instanceof bb.Model ){
-	        model = model.toJSON();
-	      }
-	      if( ! model[ this.getRemoteIdAttribute() ] ){
-	        model._state = this.states.create;
-	      }
-	      return model;
-	    }.bind(this));
-	    return IDBCollection.prototype.saveBatch.call( this, models, options );
-	  },
-
-	  saveRemoteBatch: function(){},
-
-	  parse: function( resp, options ){
-	    options = options || {};
-	    resp = resp && resp[this.name] ? resp[this.name] : resp;
-	    if( options.remote ){
-	      resp = _.map( resp, function( attrs ){
-	        return this.mergeModels( attrs, options );
-	      }.bind(this));
-	    }
-	    return IDBCollection.prototype.parse.call( this, resp, options );
-	  },
-
-	  /* jshint -W074 */
-	  mergeModels: function( attrs, options ){
-	    var model = this.findByRemoteId( attrs );
-
-	    if( options.remoteIds ){
-	      if( ! model || attrs.last_updated > model.get('last_updated') ){
-	        attrs._state = this.states.read;
-	      }
-	    }
-
-	    if( model && model.id ){
-	      //attrs = _.extend( model.toJSON(), attrs );
-	      attrs = _.extend( model.attributes, attrs );
-	    }
-
-	    return attrs;
-	  },
-	  /* jshint +W074 */
-
+	  //saveBatch: function( models, options ){
+	  //  options = options || {};
+	  //  if( options.remote ){
+	  //    return this.saveRemoteBatch( models, options );
+	  //  }
+	  //  return this.saveLocalBatch( models, options );
+	  //},
+	  //
+	  //saveLocalBatch: function( models, options ){
+	  //  models = _.map( models, function( model ){
+	  //    if( model instanceof bb.Model ){
+	  //      model = model.toJSON();
+	  //    }
+	  //    if( ! model[ this.getRemoteIdAttribute() ] ){
+	  //      model._state = this.states.create;
+	  //    }
+	  //    return model;
+	  //  }.bind(this));
+	  //  return IDBCollection.prototype.saveBatch.call( this, models, options );
+	  //},
+	  //
+	  //saveRemoteBatch: function(){},
+	  //
+	  //parse: function( resp, options ){
+	  //  options = options || {};
+	  //  resp = resp && resp[this.name] ? resp[this.name] : resp;
+	  //  if( options.remote ){
+	  //    resp = _.map( resp, function( attrs ){
+	  //      return this.mergeModels( attrs, options );
+	  //    }.bind(this));
+	  //  }
+	  //  return IDBCollection.prototype.parse.call( this, resp, options );
+	  //},
+	  //
+	  ///* jshint -W074 */
+	  //mergeModels: function( attrs, options ){
+	  //  var model = this.findByRemoteId( attrs );
+	  //
+	  //  if( options.remoteIds ){
+	  //    if( ! model || attrs.last_updated > model.get('last_updated') ){
+	  //      attrs._state = this.states.read;
+	  //    }
+	  //  }
+	  //
+	  //  if( model && model.id ){
+	  //    //attrs = _.extend( model.toJSON(), attrs );
+	  //    attrs = _.extend( model.attributes, attrs );
+	  //  }
+	  //
+	  //  return attrs;
+	  //},
+	  ///* jshint +W074 */
+	  //
 	  fetchRemoteIds: function( last_update, options ){
-	    var url = _.result(this, 'url') + '/ids';
+	    options = options || {};
+	    var self = this, url = _.result(this, 'url') + '/ids';
 
-	    options = _.defaults(options, {
+	    var opts = _.defaults(options, {
 	      url: url,
 	      remote: true,
-	      remoteIds: true,
 	      data: {
 	        fields: ['id', 'updated_at'],
 	        filter: {
@@ -243,47 +268,67 @@
 	      }
 	    });
 
-	    return this.fetchRemote(options);
-	  },
+	    opts.success = undefined;
 
-	  fetchUpdatedIds: function( options ){
-	    var last_update = _.compact( this.pluck('updated_at') ).sort().pop();
-	    return this.fetchRemoteIds( last_update, options );
-	  },
-
-	  removeGarbage: function( remoteIds, options ){
-	    var self = this, models,
-	      remoteIdAttribute = this.getRemoteIdAttribute();
-
-	    remoteIds = _.isArray( remoteIds ) ? remoteIds : [remoteIds];
-	    this.fetch()
-	      .then( function() {
-	        models = self.filter( function( model ) {
-	          return model.get(remoteIdAttribute) &&
-	            ! _.includes( remoteIds, model.get(remoteIdAttribute) );
+	    return this.sync('read', this, opts)
+	      .then( function( response ) {
+	        response = self.parse(response, opts);
+	        return self.putBatch(response, {
+	          index: {
+	            keyPath: 'id',
+	            merge: function( model, id ){
+	              var data = _.merge( model, id );
+	              if( _.isUndefined( data.local_id ) ){
+	                data._state = self.states.read;
+	              }
+	              return data;
+	            }
+	          }
 	        });
-	        return self.removeBatch( models, options );
+	      })
+	      .then(function( response ){
+	        return response;
 	      });
-	  },
-
-	  removeBatch: function(){
-	    return IDBCollection.prototype.removeBatch.apply( this, arguments );
-	  },
-
-	  getIdAttribute: function(){
-	    return 'local_id';
-	  },
-
-	  getRemoteIdAttribute: function(){
-	    return 'id';
-	  },
-
-	  findByRemoteId: function( attrs ){
-	    var attr = {};
-	    var remoteIdAttribute = this.getRemoteIdAttribute();
-	    attr[remoteIdAttribute] = attrs[remoteIdAttribute];
-	    return this.findWhere(attr);
 	  }
+	  //
+	  //fetchUpdatedIds: function( options ){
+	  //  var last_update = _.compact( this.pluck('updated_at') ).sort().pop();
+	  //  return this.fetchRemoteIds( last_update, options );
+	  //},
+	  //
+	  //removeGarbage: function( remoteIds, options ){
+	  //  var self = this, models,
+	  //    remoteIdAttribute = this.getRemoteIdAttribute();
+	  //
+	  //  remoteIds = _.isArray( remoteIds ) ? remoteIds : [remoteIds];
+	  //  this.fetch()
+	  //    .then( function() {
+	  //      models = self.filter( function( model ) {
+	  //        return model.get(remoteIdAttribute) &&
+	  //          ! _.includes( remoteIds, model.get(remoteIdAttribute) );
+	  //      });
+	  //      return self.removeBatch( models, options );
+	  //    });
+	  //},
+	  //
+	  //removeBatch: function(){
+	  //  return IDBCollection.prototype.removeBatch.apply( this, arguments );
+	  //},
+	  //
+	  //getIdAttribute: function(){
+	  //  return 'local_id';
+	  //},
+	  //
+	  //getRemoteIdAttribute: function(){
+	  //  return 'id';
+	  //},
+	  //
+	  //findByRemoteId: function( attrs ){
+	  //  var attr = {};
+	  //  var remoteIdAttribute = this.getRemoteIdAttribute();
+	  //  attr[remoteIdAttribute] = attrs[remoteIdAttribute];
+	  //  return this.findWhere(attr);
+	  //}
 
 	});
 
@@ -292,14 +337,16 @@
 /***/ function(module, exports, __webpack_require__) {
 
 	var bb = __webpack_require__(1);
-	var IndexedDB = __webpack_require__(6);
-	var IDBModel = __webpack_require__(10);
-	var _ = __webpack_require__(9);
+	var IDBAdapter = __webpack_require__(6);
+	var IDBModel = __webpack_require__(8);
+	var _ = __webpack_require__(7);
 
 	// attach to Backbone
 	module.exports = bb.IDBCollection = bb.Collection.extend({
 
 	  model: IDBModel,
+
+	  pageSize: 10,
 
 	  constructor: function(){
 	    var opts = {
@@ -311,8 +358,7 @@
 	      indexes       : this.indexes
 	    };
 
-	    this.db = new IndexedDB(opts);
-	    this.db.open();
+	    this.db = new IDBAdapter(opts);
 
 	    bb.Collection.apply( this, arguments );
 	  },
@@ -324,14 +370,26 @@
 	    var self = this;
 	    return this.db.open()
 	      .then(function(){
-	        return self.db.clear();
-	      })
-	      .done(function(){
 	        self.reset();
+	        return self.db.clear();
 	      });
 	  },
 
-	  saveBatch: function( models, options ){
+	  /**
+	   *
+	   */
+	  count: function(){
+	    var self = this;
+	    return this.db.open()
+	      .then(function(){
+	        return self.db.count();
+	      });
+	  },
+
+	  /**
+	   *
+	   */
+	  putBatch: function( models, options ){
 	    options = options || {};
 	    var self = this;
 	    if( _.isEmpty( models ) ){
@@ -342,23 +400,22 @@
 	    }
 	    return this.db.open()
 	      .then( function() {
-	        return self.db.putBatch( models );
-	      })
-	      .then( function(){
-	        self.set(models, options);
-	        if( options.success ){
-	          options.success( self, models, options );
-	        }
-	        return models;
+	        return self.db.putBatch( models, options );
 	      });
 	  },
 
+	  /**
+	   *
+	   */
 	  getChangedModels: function(){
 	    return this.filter(function( model ){
 	      return model.isNew() || model.hasChanged();
 	    });
 	  },
 
+	  /**
+	   *
+	   */
 	  removeBatch: function( models, options ){
 	    options = options || {};
 	    var self = this;
@@ -384,274 +441,311 @@
 /* 6 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/**
-	 * Backbone adapter for idb-wrapper api
-	 */
-	var IDBStore = __webpack_require__(7);
-	var $ = __webpack_require__(8);
-	var _ = __webpack_require__(9);
-	var bb = __webpack_require__(1);
+	var _ = __webpack_require__(7);
 
-	function IndexedDB(options) {
-	  options = options || {};
-	  this.options = options;
+	var indexedDB = window.indexedDB;
+	var Promise = window.Promise;
+
+	var consts = {
+	  'READ_ONLY'         : 'readonly',
+	  'READ_WRITE'        : 'readwrite',
+	  'VERSION_CHANGE'    : 'versionchange',
+	  'NEXT'              : 'next',
+	  'NEXT_NO_DUPLICATE' : 'nextunique',
+	  'PREV'              : 'prev',
+	  'PREV_NO_DUPLICATE' : 'prevunique'
+	};
+
+	var defaults = {
+	  storeName     : 'store',
+	  storePrefix   : 'Prefix_',
+	  dbVersion     : 1,
+	  keyPath       : 'id',
+	  autoIncrement : true,
+	  indexes       : []
+	};
+
+	function IDBAdapter( options ){
+	  this.opts = _.defaults( options, defaults );
+	  this.opts.dbName = this.opts.storePrefix + this.opts.storeName;
 	}
 
-	var methods = {
+	IDBAdapter.prototype = {
 
-	  /**
-	   *
-	   */
-	  open: function () {
+	  constructor: IDBAdapter,
+
+	  open: function(){
 	    if( ! this._open ){
-	      var options = this.options || {};
-	      this._open = new $.Deferred();
+	      var self = this;
 
-	      options.onStoreReady = this._open.resolve;
-	      options.onError = this._open.reject;
+	      this._open = new Promise(function (resolve, reject) {
+	        var request = indexedDB.open(self.opts.dbName);
 
-	      this.store = new IDBStore(options);
+	        request.onsuccess = function (event) {
+	          self.db = event.target.result;
+	          resolve(self.db);
+	        };
+
+	        request.onerror = function (event) {
+	          var err = new Error('open indexedDB error');
+	          err.code = event.target.errorCode;
+	          reject(err);
+	        };
+
+	        request.onupgradeneeded = function (event) {
+	          var store = event.currentTarget.result
+	            .createObjectStore(self.opts.storeName, self.opts);
+
+	          self.opts.indexes.forEach(function (index) {
+	            var unique = !!index.unique;
+	            store.createIndex(index.name, index.keyPath, {
+	              unique: unique
+	            });
+	          });
+	        };
+	      });
 	    }
 
 	    return this._open;
 	  },
 
-	  /**
-	   * Wrapper for put, return full data
-	   */
-	  update: function(model) {
-	    var self = this, data = this._returnAttributes(model);
-
-	    return this.put(data)
-	      .then(function(key){
-	        return self.get(key);
-	      });
+	  close: function(){
+	    this.db.close();
+	    this.db = undefined;
+	    this._open = undefined;
 	  },
 
-	  /**
-	   * Wrapper for remove, return full data
-	   */
-	  destroy: function(model) {
-	    var data = this._returnAttributes(model);
-	    var key = this._returnKey( data );
-
-	    return this.remove(key)
-	      .then(function(){
-	        return data;
-	      });
+	  getTransaction: function( access ){
+	    return this.db.transaction([this.opts.storeName], access);
+	    // transaction.oncomplete
+	    // transaction.onabort
+	    // transaction.onerror
 	  },
 
-	  /**
-	   *
-	   */
-	  put: function (data) {
-	    var deferred = new $.Deferred();
-	    this.store.put(data, deferred.resolve, deferred.reject);
-	    return deferred.promise();
+	  getObjectStore: function( access ){
+	    return this.getTransaction(access).objectStore(this.opts.storeName);
 	  },
 
-	  /**
-	   *
-	   */
-	  get: function (key) {
-	    key = this._returnKey(key);
-	    var deferred = new $.Deferred();
-	    try {
-	      this.store.get(key, deferred.resolve, deferred.reject);
-	    } catch(error) {
-	      deferred.reject(error);
-	    }
-	    return deferred.promise();
-	  },
+	  count: function(){
+	    var objectStore = this.getObjectStore( consts.READ_ONLY );
 
-	  /**
-	   *
-	   */
-	  remove: function(key){
-	    var deferred = new $.Deferred();
-	    this.store.remove(key, deferred.resolve, deferred.reject);
-	    return deferred.promise();
-	  },
+	    return new Promise(function (resolve, reject) {
+	      var request = objectStore.count();
 
-	  /**
-	   *
-	   */
-	  getAll: function(){
-	    var deferred = new $.Deferred();
-	    this.store.getAll(deferred.resolve, deferred.reject);
-	    return deferred.promise();
-	  },
+	      request.onsuccess = function (event) {
+	        resolve( event.target.result );
+	      };
 
-	  /**
-	   * Iterates over the store using the given options and calling onItem
-	   * for each entry matching the options.
-	   */
-	  iterate: function(options) {
-	    options = options || {};
-	    var deferred = new $.Deferred();
-	    options.onEnd = deferred.resolve;
-	    options.onError = deferred.reject;
-	    var onItem = deferred.notify;
-	    this.store.iterate(onItem, options);
-	    return deferred.promise();
-	  },
-
-	  /**
-	   * Creates a key range using specified options. This key range can be
-	   * handed over to the count() and iterate() methods.
-	   *
-	   * Note: You must provide at least one or both of "lower" or "upper" value.
-	   */
-	  makeKeyRange: function(options) {
-	    return this.store.makeKeyRange(options);
-	  },
-
-	  /**
-	   * Perform a batch operation to save and/or remove models in the current
-	   * collection to indexedDB. This is a proxy to the idbstore `batch` method
-	   */
-	  batch: function(dataArray) {
-	    var deferred = new $.Deferred();
-	    dataArray = this._returnArrayOfAttributes( dataArray );
-	    this.store.batch(dataArray, deferred.resolve, deferred.reject);
-	    return deferred.promise();
-	  },
-
-	  /**
-	   * Perform a batch put operation to save models to indexedDB. This is a
-	   * proxy to the idbstore `putBatch` method
-	   */
-	  putBatch: function(dataArray) {
-	    if( !_.isArray(dataArray) ){
-	      return this.put(dataArray);
-	    }
-
-	    var deferred = new $.Deferred();
-	    dataArray = this._returnArrayOfAttributes( dataArray );
-	    this.store.putBatch(dataArray, deferred.resolve, deferred.reject);
-	    return deferred.promise();
-	  },
-
-	  /**
-	   *
-	   */
-	  upsertBatch: function(dataArray, options){
-	    if( !_.isArray(dataArray) ){
-	      return this.put(dataArray);
-	    }
-
-	    var dfd = new $.Deferred();
-	    dataArray = this._returnArrayOfAttributes( dataArray );
-	    this.store.upsertBatch(dataArray, options, dfd.resolve, dfd.reject);
-	    return dfd.promise();
-	  },
-
-	  /**
-	   * Perform a batch operation to remove models from indexedDB. This is a
-	   * proxy to the idbstore `removeBatch` method
-	   */
-	  removeBatch: function(keyArray) {
-	    if( !_.isArray(keyArray) ){
-	      return this.remove(keyArray);
-	    }
-	    var deferred = new $.Deferred();
-	    keyArray = this._returnArrayOfKeys( keyArray );
-	    this.store.removeBatch(keyArray, deferred.resolve, deferred.reject);
-	    return deferred.promise();
-	  },
-
-	  /**
-	   * Clears all content from the current indexedDB for this collection
-	   */
-	  clear: function() {
-	    var deferred = new $.Deferred();
-	    this.store.clear(deferred.resolve, deferred.reject);
-	    return deferred.promise();
-	  },
-
-	  /**
-	   *
-	   */
-	  query: function(index, keyRange){
-	    var deferred = new $.Deferred();
-
-	    this.store.query(deferred.resolve, {
-	      index: index,
-	      keyRange: keyRange,
-	      onError: deferred.reject
+	      request.onerror = function (event) {
+	        var err = new Error('count error');
+	        err.code = event.target.errorCode;
+	        reject(err);
+	      };
 	    });
-
-	    return deferred.promise();
 	  },
 
-	  /**
-	   * convert models to json
-	   */
-	  _returnAttributes: function(model){
-	    if(model instanceof bb.Model){
-	      return model.toJSON();
+	  put: function( data, options ){
+	    options = options || {};
+	    var self = this, objectStore;
+
+	    // merge on index keyPath
+	    if( options.index ){
+	      return this.merge( data, options );
 	    }
-	    return model;
-	  },
 
-	  /**
-	   * convert collections to json
-	   */
-	  _returnArrayOfAttributes: function(models){
-	    return _.map( models, function( model ){
-	      return this._returnAttributes(model);
-	    }.bind(this));
-	  },
-
-	  /**
-	   * convert model to keyPath id
-	   */
-	  _returnKey: function(key){
-	    key = this._returnAttributes(key);
-	    if( _.isObject(key) && _.has(key, this.store.keyPath) ) {
-	      key = key[this.store.keyPath];
+	    // continue an open transaction
+	    if( options.objectStore ){
+	      objectStore = options.objectStore;
+	    } else {
+	      objectStore = this.getObjectStore( consts.READ_WRITE );
 	    }
-	    return key;
+
+	    return new Promise(function (resolve, reject) {
+	      var request = objectStore.put( data );
+
+	      request.onsuccess = function (event) {
+	        self.get( event.target.result, {
+	          objectStore: objectStore
+	        })
+	        .then( resolve )
+	        .catch( reject );
+	      };
+
+	      request.onerror = function (event) {
+	        var err = new Error('put error');
+	        err.code = event.target.errorCode;
+	        reject(err);
+	      };
+	    });
 	  },
 
-	  /**
-	   * convert collection to keyPath ids
-	   */
-	  _returnArrayOfKeys: function(keys){
-	    return _.map( keys, function( key ){
-	      return this._returnKey(key);
+	  get: function( key, options ){
+	    options = options || {};
+	    var objectStore;
+
+	    // continue an open transaction
+	    if( options.objectStore ){
+	      objectStore = options.objectStore;
+	    } else {
+	      objectStore = this.getObjectStore( consts.READ_ONLY );
+	    }
+
+	    return new Promise(function (resolve, reject) {
+	      var request = objectStore.get( key );
+
+	      request.onsuccess = function (event) {
+	        resolve( event.target.result );
+	      };
+
+	      request.onerror = function (event) {
+	        var err = new Error('get error');
+	        err.code = event.target.errorCode;
+	        reject(err);
+	      };
+	    });
+	  },
+
+	  delete: function( key, options ){
+	    options = options || {};
+	    var objectStore = this.getObjectStore( consts.READ_WRITE );
+
+	    return new Promise(function (resolve, reject) {
+	      var request = objectStore.delete( key );
+
+	      request.onsuccess = function (event) {
+	        resolve( event.target.result ); // undefined
+	      };
+
+	      request.onerror = function (event) {
+	        var err = new Error('delete error');
+	        err.code = event.target.errorCode;
+	        reject(err);
+	      };
+	    });
+	  },
+
+	  putBatch: function( dataArray, options ){
+	    options = options || {};
+	    options.objectStore = this.getObjectStore( consts.READ_WRITE );
+	    var batch = [];
+
+	    _.each( dataArray, function(data){
+	      batch.push( this.put(data, options) );
 	    }.bind(this));
+
+	    return Promise.all(batch);
+	  },
+
+	  merge: function( data, options ){
+	    options = options || {};
+	    var self = this, objectStore = this.getObjectStore( consts.READ_WRITE );
+	    var keyPath = _.isString( options.index ) ? options.index :
+	      _.get( options, ['index', 'keyPath'], this.opts.keyPath );
+	    var key = data[keyPath];
+
+	    return new Promise(function (resolve, reject) {
+	      var objectStoreIndex = objectStore.index( keyPath );
+	      var request = objectStoreIndex.get( key );
+
+	      request.onsuccess = function (event) {
+	        var fn = _.isFunction( options.index.merge ) ? options.index.merge : _.merge ;
+	        self.put( fn( event.target.result, data ), { objectStore: objectStore } )
+	          .then( resolve );
+	      };
+
+	      request.onerror = function (event) {
+	        var err = new Error('merge error');
+	        err.code = event.target.errorCode;
+	        reject(err);
+	      };
+	    });
+	  },
+
+	  getAll: function( options ){
+	    options = options || {};
+	    var limit = options.limit || 10;
+	    var objectStore = this.getObjectStore( consts.READ_ONLY );
+
+	    // getAll fallback
+	    if( objectStore.getAll === undefined ){
+	      return this._getAll( options );
+	    }
+
+	    return new Promise(function (resolve, reject) {
+	      var request = objectStore.getAll(null, limit);
+
+	      request.onsuccess = function (event) {
+	        resolve( event.target.result );
+	      };
+
+	      request.onerror = function (event) {
+	        var err = new Error('getAll error');
+	        err.code = event.target.errorCode;
+	        reject(err);
+	      };
+	    });
+	  },
+
+	  _getAll: function( options ){
+	    options = options || {};
+	    var limit = options.limit || 10;
+	    var objectStore = this.getObjectStore( consts.READ_ONLY );
+
+	    return new Promise(function (resolve, reject) {
+	      var request = objectStore.openCursor();
+	      var records = [];
+
+	      request.onsuccess = function (event) {
+	        var cursor = event.target.result;
+	        if( cursor && records.length < limit ){
+	          records.push( cursor.value );
+	          return cursor.continue();
+	        }
+	        resolve( records );
+	      };
+
+	      request.onerror = function (event) {
+	        var err = new Error('getAll error');
+	        err.code = event.target.errorCode;
+	        reject(err);
+	      };
+	    });
+	  },
+
+	  clear: function(){
+	    var objectStore = this.getObjectStore( consts.READ_WRITE );
+
+	    return new Promise(function (resolve, reject) {
+	      var request = objectStore.clear();
+
+	      request.onsuccess = function (event) {
+	        resolve( event.target.result );
+	      };
+
+	      request.onerror = function (event) {
+	        var err = new Error('clear error');
+	        err.code = event.target.errorCode;
+	        reject(err);
+	      };
+	    });
 	  }
 
 	};
 
-	_.extend(IndexedDB.prototype, methods);
-	module.exports = IndexedDB;
+	module.exports = IDBAdapter;
 
 /***/ },
 /* 7 */
 /***/ function(module, exports) {
 
-	module.exports = IDBStore;
-
-/***/ },
-/* 8 */
-/***/ function(module, exports) {
-
-	module.exports = jQuery;
-
-/***/ },
-/* 9 */
-/***/ function(module, exports) {
-
 	module.exports = _;
 
 /***/ },
-/* 10 */
+/* 8 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var bb = __webpack_require__(1);
-	var _ = __webpack_require__(9);
+	var _ = __webpack_require__(7);
 
 	// attach to Backbone
 	module.exports = bb.IDBModel = bb.Model.extend({
@@ -670,12 +764,12 @@
 	});
 
 /***/ },
-/* 11 */
+/* 9 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var bb = __webpack_require__(1);
-	var IDBModel = __webpack_require__(10);
-	var _ = __webpack_require__(9);
+	var IDBModel = __webpack_require__(8);
+	var _ = __webpack_require__(7);
 
 	module.exports = bb.DualModel = IDBModel.extend({
 
@@ -708,16 +802,13 @@
 	      success: false
 	    });
 	    return bb.sync.call( this, method, model, opts )
-	      .then( function( resp ){
-	        resp = options.parse ? model.parse(resp, options) : resp;
-	        model.set( resp );
+	      .then( function(){
 	        var remoteMethod = self.getRemoteMethod();
 	        opts.remote = true;
 	        return bb.sync.call( self, remoteMethod, model, opts );
 	      })
 	      .then( function( resp ){
 	        resp = options.parse ? model.parse(resp, options) : resp;
-	        resp = _.extend( {}, resp, { _state: undefined } );
 	        model.set( resp );
 	        opts.remote = false;
 	        opts.success = options.success;
@@ -756,7 +847,10 @@
 	  },
 
 	  parse: function( resp, options ) {
-	    resp = resp && resp[this.name] ? resp[this.name] : resp;
+	    if( options.remote ){
+	      resp = resp && resp[this.name] ? resp[this.name] : resp;
+	      resp._state = undefined;
+	    }
 	    return IDBModel.prototype.parse.call( this, resp, options );
 	  }
 
