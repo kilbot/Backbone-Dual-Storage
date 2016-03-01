@@ -10,7 +10,9 @@ module.exports = bb.DualCollection = IDBCollection.extend({
   keyPath: 'local_id',
 
   indexes: [
-    {name: 'id', keyPath: 'id', unique: true}
+    {name: 'id', keyPath: 'id', unique: true},
+    {name: 'updated_at', keyPath: 'updated_at'},
+    {name: '_state', keyPath: '_state'}
   ],
 
   // delayed states
@@ -156,9 +158,10 @@ module.exports = bb.DualCollection = IDBCollection.extend({
         return self.putBatch(response, {
           index: {
             keyPath: 'id',
-            merge: function( model, id ){
-              var data = _.merge( model, id );
-              if( _.isUndefined( data.local_id ) ){
+            merge: function( local, remote ){
+              var updated_at = _.has(local, 'updated_at') ? local.updated_at : undefined;
+              var data = _.merge( local, remote );
+              if( _.isUndefined( data.local_id ) || updated_at !== data.updated_at ){
                 data._state = self.states.read;
               }
               return data;
@@ -169,12 +172,15 @@ module.exports = bb.DualCollection = IDBCollection.extend({
       .then(function( response ){
         return response;
       });
+  },
+
+  fetchUpdatedIds: function( options ){
+    var self = this;
+    return this.db.findHighestIndex('updated_at')
+      .then(function (last_update) {
+        return self.fetchRemoteIds( last_update, options );
+      });
   }
-  //
-  //fetchUpdatedIds: function( options ){
-  //  var last_update = _.compact( this.pluck('updated_at') ).sort().pop();
-  //  return this.fetchRemoteIds( last_update, options );
-  //},
   //
   //removeGarbage: function( remoteIds, options ){
   //  var self = this, models,

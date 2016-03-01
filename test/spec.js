@@ -8,7 +8,7 @@ describe('Backbone.DualCollection', function () {
 
   it('should be in a valid state', function() {
     var collection = new Backbone.DualCollection();
-    expect( collection).to.be.ok;
+    expect( collection ).to.be.ok;
   });
 
   it('should create to local IndexedDB', function( done ){
@@ -262,92 +262,88 @@ describe('Backbone.DualCollection', function () {
 
   });
 
-  //it('should fetch and merge all remote ids', function( done ){
-  //
-  //  // mock server response
-  //  var response = JSON.stringify({ nested: [{ id: 1 }, { id: 2 }, { id: 3 }] });
-  //  this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
-  //    response
-  //  ]);
-  //
-  //  var collection = new Backbone.DualCollection();
-  //  collection.url = '/test';
-  //  collection.name = 'nested';
-  //
-  //  collection.saveBatch([
-  //    { id: 1, foo: 'bar' },
-  //    { id: 2 }
-  //  ]).then(function(){
-  //    expect( collection ).to.have.length( 2 );
-  //
-  //    collection.fetchUpdatedIds({
-  //      special: true,
-  //      error: done,
-  //      success: function( collection, response, options ){
-  //        expect( collection ).to.have.length( 3 );
-  //
-  //        var read = collection.states.read;
-  //        expect( collection.map('_state') ).eqls([ undefined, undefined, read ]);
-  //        expect( options.special ).to.be.true;
-  //
-  //        collection.fetch({
-  //          reset: true,
-  //          error: done,
-  //          success: function( collection ){
-  //            var model = collection.findWhere({ id: 1 });
-  //            expect( model.get('foo') ).equals('bar');
-  //
-  //            done();
-  //          }
-  //        });
-  //
-  //      }
-  //    });
-  //
-  //  });
-  //
-  //});
-  //
-  //it('should fetch updated ids from the server', function( done ){
-  //
-  //  // mock server response
-  //  var response = JSON.stringify({
-  //    nested: [
-  //      { id: 2, last_updated: '2016-01-14T13:15:04Z' },
-  //      { id: 4, last_updated: '2016-01-12T13:15:04Z' }
-  //    ]
-  //  });
-  //  this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
-  //    response
-  //  ]);
-  //
-  //  var collection = new Backbone.DualCollection();
-  //  collection.url = '/test';
-  //  collection.name = 'nested';
-  //
-  //  collection.saveBatch([
-  //    { id: 1, last_updated: '2016-01-04T13:15:04Z', foo: 'bar' },
-  //    { id: 2, last_updated: '2016-01-11T13:15:04Z' },
-  //    { id: 3, last_updated: '2015-01-04T13:15:04Z' }
-  //  ]).then(function(){
-  //    expect( collection ).to.have.length( 3 );
-  //
-  //    collection.fetchUpdatedIds({
-  //      special: true,
-  //      error: done,
-  //      success: function( collection, response, options ){
-  //        expect( collection ).to.have.length( 4 );
-  //        var read = collection.states.read;
-  //        expect( collection.map('_state') ).eqls([ undefined, read, undefined, read ]);
-  //        expect( _.map(response, 'id') ).eqls( [ 2, 4 ] );
-  //        expect( options.special ).to.be.true;
-  //        done();
-  //      }
-  //    });
-  //
-  //  });
-  //
-  //});
+  it('should fetch and merge all remote ids', function( done ){
+
+    // mock server response
+    var response = JSON.stringify({ nested: [{ id: 1 }, { id: 2 }, { id: 3 }] });
+    this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
+      response
+    ]);
+
+    var collection = new Backbone.DualCollection();
+    collection.url = '/test';
+    collection.name = 'nested';
+
+    collection.putBatch([
+      { id: 1, foo: 'bar' },
+      { id: 2 }
+    ])
+    .then(function() {
+      return collection.fetchRemoteIds();
+    })
+    .then(function( response ){
+      expect( response ).to.have.length( 3 );
+
+      var read = collection.states.read;
+      expect( _.map( response, '_state') ).eqls([ undefined, undefined, read ]);
+
+      collection.fetch({
+        error: done,
+        success: function( collection ){
+          expect( collection ).to.have.length( 3 );
+
+          var model = collection.findWhere({ id: 1 });
+          expect( model.get('foo') ).equals('bar');
+
+          done();
+        }
+      });
+    });
+
+  });
+
+  it('should fetch updated ids from the server', function( done ){
+
+    // mock server response
+    var response = JSON.stringify({
+      nested: [
+        { id: 2, updated_at: '2016-01-14T13:15:04Z' },
+        { id: 4, updated_at: '2016-01-12T13:15:04Z' }
+      ]
+    });
+    this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
+      response
+    ]);
+
+    var collection = new Backbone.DualCollection();
+    collection.url = '/test';
+    collection.name = 'nested';
+
+    collection.putBatch([
+      { id: 1, updated_at: '2016-01-04T13:15:04Z', foo: 'bar' },
+      { id: 2, updated_at: '2016-01-11T13:15:04Z' },
+      { id: 3, updated_at: '2015-01-04T13:15:04Z' }
+    ]).then(function( response ){
+      expect( response ).to.have.length( 3 );
+      return collection.fetchUpdatedIds();
+    })
+    .then(function( response ){
+      expect( response ).to.have.length( 2 );
+      var read = collection.states.read;
+      expect( _.map(response, 'id') ).eqls([ 2, 4 ]);
+      expect( _.map(response, '_state') ).eqls([ read, read ]);
+
+      collection.fetch({
+        error: done,
+        success: function( collection ){
+          expect( collection ).to.have.length( 4 );
+          done();
+        }
+      });
+
+    });
+
+  });
   //
   //it('should remove garbage', function( done ){
   //

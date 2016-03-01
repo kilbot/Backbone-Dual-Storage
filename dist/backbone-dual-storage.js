@@ -90,9 +90,9 @@
 	          }
 	          return entity.db.getAll( options );
 	        case 'create':
-	          return entity.db.put( data, options );
+	          return entity.db.create( data, options );
 	        case 'update':
-	          return entity.db.put( data, options );
+	          return entity.db.update( data, options );
 	        case 'delete':
 	          if( isModel ){
 	            return entity.db.delete( entity.id, options );
@@ -130,7 +130,9 @@
 	  keyPath: 'local_id',
 
 	  indexes: [
-	    {name: 'id', keyPath: 'id', unique: true}
+	    {name: 'id', keyPath: 'id', unique: true},
+	    {name: 'updated_at', keyPath: 'updated_at'},
+	    {name: '_state', keyPath: '_state'}
 	  ],
 
 	  // delayed states
@@ -276,9 +278,10 @@
 	        return self.putBatch(response, {
 	          index: {
 	            keyPath: 'id',
-	            merge: function( model, id ){
-	              var data = _.merge( model, id );
-	              if( _.isUndefined( data.local_id ) ){
+	            merge: function( local, remote ){
+	              var updated_at = _.has(local, 'updated_at') ? local.updated_at : undefined;
+	              var data = _.merge( local, remote );
+	              if( _.isUndefined( data.local_id ) || updated_at !== data.updated_at ){
 	                data._state = self.states.read;
 	              }
 	              return data;
@@ -289,12 +292,15 @@
 	      .then(function( response ){
 	        return response;
 	      });
+	  },
+
+	  fetchUpdatedIds: function( options ){
+	    var self = this;
+	    return this.db.findHighestIndex('updated_at')
+	      .then(function (last_update) {
+	        return self.fetchRemoteIds( last_update, options );
+	      });
 	  }
-	  //
-	  //fetchUpdatedIds: function( options ){
-	  //  var last_update = _.compact( this.pluck('updated_at') ).sort().pop();
-	  //  return this.fetchRemoteIds( last_update, options );
-	  //},
 	  //
 	  //removeGarbage: function( remoteIds, options ){
 	  //  var self = this, models,
@@ -346,8 +352,6 @@
 
 	  model: IDBModel,
 
-	  pageSize: 10,
-
 	  constructor: function(){
 	    var opts = {
 	      storeName     : this.name,
@@ -355,7 +359,8 @@
 	      dbVersion     : this.dbVersion,
 	      keyPath       : this.keyPath,
 	      autoIncrement : this.autoIncrement,
-	      indexes       : this.indexes
+	      indexes       : this.indexes,
+	      pageSize      : this.pageSize
 	    };
 
 	    this.db = new IDBAdapter(opts);
@@ -442,6 +447,9 @@
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(7);
+	var is_safari = navigator.userAgent.indexOf('Safari') !== -1 &&
+	  navigator.userAgent.indexOf('Chrome') === -1 &&
+	  navigator.userAgent.indexOf('Android') === -1;
 
 	var indexedDB = window.indexedDB;
 	var Promise = window.Promise;
@@ -462,7 +470,14 @@
 	  dbVersion     : 1,
 	  keyPath       : 'id',
 	  autoIncrement : true,
-	  indexes       : []
+	  indexes       : [],
+	  pageSize      : 10,
+	  onerror       : function(options) {
+	    options = options || {};
+	    var err = new Error(options._error.message);
+	    err.code = event.target.errorCode;
+	    options._error.callback(err);
+	  }
 	};
 
 	function IDBAdapter( options ){
@@ -474,8 +489,9 @@
 
 	  constructor: IDBAdapter,
 
-	  open: function(){
-	    if( ! this._open ){
+	  open: function (options) {
+	    options = options || {};
+	    if (!this._open) {
 	      var self = this;
 
 	      this._open = new Promise(function (resolve, reject) {
@@ -483,18 +499,26 @@
 
 	        request.onsuccess = function (event) {
 	          self.db = event.target.result;
+
+	          // hack for Safari
+	          if( is_safari ){
+	            return self.findHighestIndex()
+	              .then(function (key) {
+	                self.highestKey = key || 0;
+	                resolve(self.db);
+	              });
+	          }
+
 	          resolve(self.db);
 	        };
 
 	        request.onerror = function (event) {
-	          var err = new Error('open indexedDB error');
-	          err.code = event.target.errorCode;
-	          reject(err);
+	          options._error = {event: event, message: 'open indexedDB error', callback: reject};
+	          self.opts.onerror(options);
 	        };
 
 	        request.onupgradeneeded = function (event) {
-	          var store = event.currentTarget.result
-	            .createObjectStore(self.opts.storeName, self.opts);
+	          var store = event.currentTarget.result.createObjectStore(self.opts.storeName, self.opts);
 
 	          self.opts.indexes.forEach(function (index) {
 	            var unique = !!index.unique;
@@ -509,111 +533,132 @@
 	    return this._open;
 	  },
 
-	  close: function(){
+	  close: function () {
 	    this.db.close();
 	    this.db = undefined;
 	    this._open = undefined;
 	  },
 
-	  getTransaction: function( access ){
+	  getTransaction: function (access) {
 	    return this.db.transaction([this.opts.storeName], access);
-	    // transaction.oncomplete
-	    // transaction.onabort
-	    // transaction.onerror
 	  },
 
-	  getObjectStore: function( access ){
+	  getObjectStore: function (access) {
 	    return this.getTransaction(access).objectStore(this.opts.storeName);
 	  },
 
-	  count: function(){
-	    var objectStore = this.getObjectStore( consts.READ_ONLY );
+	  count: function (options) {
+	    options = options || {};
+	    var self = this, objectStore = this.getObjectStore(consts.READ_ONLY);
 
 	    return new Promise(function (resolve, reject) {
 	      var request = objectStore.count();
 
 	      request.onsuccess = function (event) {
-	        resolve( event.target.result );
+	        resolve(event.target.result);
 	      };
 
 	      request.onerror = function (event) {
-	        var err = new Error('count error');
-	        err.code = event.target.errorCode;
-	        reject(err);
+	        options._error = {event: event, message: 'count error', callback: reject};
+	        self.opts.onerror(options);
 	      };
 	    });
 	  },
 
-	  put: function( data, options ){
+	  create: function(data, options){
+	    var self = this;
+	    return this.add(data, options)
+	      .then(function(key){
+	        return self.get(key, options);
+	      });
+	  },
+
+	  update: function(data, options){
+	    var self = this;
+	    return this.put(data, options)
+	      .then(function(key){
+	        return self.get(key, options);
+	      });
+	  },
+
+	  put: function (data, options) {
 	    options = options || {};
-	    var self = this, objectStore;
+	    var self = this, keyPath = this.opts.keyPath;
+	    var objectStore = this.getObjectStore(consts.READ_WRITE);
 
 	    // merge on index keyPath
-	    if( options.index ){
-	      return this.merge( data, options );
+	    if (options.index) {
+	      return this.merge(data, options);
 	    }
 
-	    // continue an open transaction
-	    if( options.objectStore ){
-	      objectStore = options.objectStore;
-	    } else {
-	      objectStore = this.getObjectStore( consts.READ_WRITE );
+	    if(!data[keyPath]){
+	      return this.add(data, options);
 	    }
 
 	    return new Promise(function (resolve, reject) {
-	      var request = objectStore.put( data );
+	      var request = objectStore.put(data);
 
 	      request.onsuccess = function (event) {
-	        self.get( event.target.result, {
-	          objectStore: objectStore
-	        })
-	        .then( resolve )
-	        .catch( reject );
+	        resolve(event.target.result);
 	      };
 
 	      request.onerror = function (event) {
-	        var err = new Error('put error');
-	        err.code = event.target.errorCode;
-	        reject(err);
+	        options._error = {event: event, message: 'put error', callback: reject};
+	        self.opts.onerror(options);
 	      };
 	    });
 	  },
 
-	  get: function( key, options ){
+	  add: function(data, options){
 	    options = options || {};
-	    var objectStore;
+	    var self = this, keyPath = this.opts.keyPath;
+	    var objectStore = this.getObjectStore(consts.READ_WRITE);
 
-	    // continue an open transaction
-	    if( options.objectStore ){
-	      objectStore = options.objectStore;
-	    } else {
-	      objectStore = this.getObjectStore( consts.READ_ONLY );
+	    if(is_safari){
+	      data[keyPath] = ++this.highestKey;
 	    }
 
 	    return new Promise(function (resolve, reject) {
-	      var request = objectStore.get( key );
+	      var request = objectStore.add(data);
 
 	      request.onsuccess = function (event) {
-	        resolve( event.target.result );
+	        resolve(event.target.result);
 	      };
 
 	      request.onerror = function (event) {
-	        var err = new Error('get error');
-	        err.code = event.target.errorCode;
-	        reject(err);
+	        options._error = {event: event, message: 'add error', callback: reject};
+	        self.opts.onerror(options);
 	      };
 	    });
 	  },
 
-	  delete: function( key, options ){
+	  get: function (key, options) {
 	    options = options || {};
-	    var objectStore = this.getObjectStore( consts.READ_WRITE );
+	    var self = this, objectStore = this.getObjectStore(consts.READ_ONLY);
 
 	    return new Promise(function (resolve, reject) {
-	      var request = objectStore.delete( key );
+	      var request = objectStore.get(key);
 
 	      request.onsuccess = function (event) {
-	        resolve( event.target.result ); // undefined
+	        resolve(event.target.result);
+	      };
+
+	      request.onerror = function (event) {
+	        options._error = {event: event, message: 'get error', callback: reject};
+	        self.opts.onerror(options);
+	      };
+	    });
+	  },
+
+	  delete: function (key, options) {
+	    options = options || {};
+	    var self = this, objectStore = this.getObjectStore(consts.READ_WRITE);
+
+	    return new Promise(function (resolve, reject) {
+	      var request = objectStore.delete(key);
+
+	      request.onsuccess = function (event) {
+	        resolve(event.target.result); // undefined
 	      };
 
 	      request.onerror = function (event) {
@@ -621,75 +666,91 @@
 	        err.code = event.target.errorCode;
 	        reject(err);
 	      };
+	      request.onerror = function (event) {
+	        options._error = {event: event, message: 'delete error', callback: reject};
+	        self.opts.onerror(options);
+	      };
 	    });
 	  },
 
-	  putBatch: function( dataArray, options ){
+	  putBatch: function (dataArray, options) {
 	    options = options || {};
-	    options.objectStore = this.getObjectStore( consts.READ_WRITE );
 	    var batch = [];
 
-	    _.each( dataArray, function(data){
-	      batch.push( this.put(data, options) );
+	    _.each(dataArray, function (data) {
+	      batch.push(this.update(data, options));
 	    }.bind(this));
 
 	    return Promise.all(batch);
 	  },
 
-	  merge: function( data, options ){
+	  merge: function (data, options) {
 	    options = options || {};
-	    var self = this, objectStore = this.getObjectStore( consts.READ_WRITE );
-	    var keyPath = _.isString( options.index ) ? options.index :
-	      _.get( options, ['index', 'keyPath'], this.opts.keyPath );
-	    var key = data[keyPath];
+	    var self = this, keyPath = options.index, fn = _.merge;
+
+	    if(_.isObject(options.index)){
+	      keyPath = _.get(options, ['index', 'keyPath'], this.opts.keyPath);
+	      if(_.isFunction(options.index.merge)){
+	        fn = options.index.merge;
+	      }
+	    }
+
+	    return this.getByIndex(keyPath, data[keyPath], options)
+	      .then(function(result){
+	        return self.put(fn(result, data));
+	      });
+	  },
+
+	  getByIndex: function(keyPath, key, options){
+	    options = options || {};
+	    var self = this;
+	    var objectStore = this.getObjectStore(consts.READ_ONLY);
+	    var openIndex = objectStore.index(keyPath);
+	    var request = openIndex.get(key);
 
 	    return new Promise(function (resolve, reject) {
-	      var objectStoreIndex = objectStore.index( keyPath );
-	      var request = objectStoreIndex.get( key );
-
 	      request.onsuccess = function (event) {
-	        var fn = _.isFunction( options.index.merge ) ? options.index.merge : _.merge ;
-	        self.put( fn( event.target.result, data ), { objectStore: objectStore } )
-	          .then( resolve );
+	        resolve(event.target.result);
 	      };
 
 	      request.onerror = function (event) {
-	        var err = new Error('merge error');
-	        err.code = event.target.errorCode;
-	        reject(err);
+	        options._error = {event: event, message: 'get by index error', callback: reject};
+	        self.opts.onerror(options);
 	      };
 	    });
 	  },
 
-	  getAll: function( options ){
+	  getAll: function (options) {
 	    options = options || {};
-	    var limit = options.limit || 10;
-	    var objectStore = this.getObjectStore( consts.READ_ONLY );
+	    var self = this;
+	    var limit = _.get(options, ['data', 'filter', 'limit'], this.opts.pageSize);
+	    var objectStore = this.getObjectStore(consts.READ_ONLY);
 
 	    // getAll fallback
-	    if( objectStore.getAll === undefined ){
-	      return this._getAll( options );
+	    if (objectStore.getAll === undefined) {
+	      return this._getAll(objectStore, limit, options);
 	    }
 
 	    return new Promise(function (resolve, reject) {
 	      var request = objectStore.getAll(null, limit);
 
 	      request.onsuccess = function (event) {
-	        resolve( event.target.result );
+	        resolve(event.target.result);
 	      };
 
 	      request.onerror = function (event) {
-	        var err = new Error('getAll error');
-	        err.code = event.target.errorCode;
-	        reject(err);
+	        options._error = {event: event, message: 'getAll error', callback: reject};
+	        self.opts.onerror(options);
 	      };
 	    });
 	  },
 
-	  _getAll: function( options ){
+	  _getAll: function (objectStore, limit, options) {
 	    options = options || {};
-	    var limit = options.limit || 10;
-	    var objectStore = this.getObjectStore( consts.READ_ONLY );
+	    var self = this;
+	    if (limit === -1) {
+	      limit = Infinity;
+	    }
 
 	    return new Promise(function (resolve, reject) {
 	      var request = objectStore.openCursor();
@@ -697,35 +758,58 @@
 
 	      request.onsuccess = function (event) {
 	        var cursor = event.target.result;
-	        if( cursor && records.length < limit ){
-	          records.push( cursor.value );
+	        if (cursor && records.length < limit) {
+	          records.push(cursor.value);
 	          return cursor.continue();
 	        }
-	        resolve( records );
+	        resolve(records);
 	      };
 
 	      request.onerror = function (event) {
-	        var err = new Error('getAll error');
-	        err.code = event.target.errorCode;
-	        reject(err);
+	        options._error = {event: event, message: 'getAll error', callback: reject};
+	        self.opts.onerror(options);
 	      };
 	    });
 	  },
 
-	  clear: function(){
-	    var objectStore = this.getObjectStore( consts.READ_WRITE );
+	  clear: function (options) {
+	    options = options || {};
+	    var self = this, objectStore = this.getObjectStore(consts.READ_WRITE);
 
 	    return new Promise(function (resolve, reject) {
 	      var request = objectStore.clear();
 
 	      request.onsuccess = function (event) {
-	        resolve( event.target.result );
+	        resolve(event.target.result);
 	      };
 
 	      request.onerror = function (event) {
-	        var err = new Error('clear error');
-	        err.code = event.target.errorCode;
-	        reject(err);
+	        options._error = {event: event, message: 'clear error', callback: reject};
+	        self.opts.onerror(options);
+	      };
+	    });
+	  },
+
+	  findHighestIndex: function (keyPath, options) {
+	    options = options || {};
+	    var self = this, objectStore = this.getObjectStore(consts.READ_ONLY);
+
+	    return new Promise(function (resolve, reject) {
+	      var request;
+	      if(keyPath){
+	        var openIndex = objectStore.index(keyPath);
+	        request = openIndex.openCursor(null, consts.PREV);
+	      } else {
+	        request = objectStore.openCursor(null, consts.PREV);
+	      }
+
+	      request.onsuccess = function (event) {
+	        resolve(event.target.result.key);
+	      };
+
+	      request.onerror = function (event) {
+	        options._error = {event: event, message: 'find highest key error', callback: reject};
+	        self.opts.onerror(options);
 	      };
 	    });
 	  }
