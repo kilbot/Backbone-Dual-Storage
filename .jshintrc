@@ -6,8 +6,6 @@
     "global"  : true
   },
 
-  "predef": ["-Promise"],
-
   "bitwise"       : false,
   "camelcase"     : false,
   "curly"         : true,

@@ -78,6 +78,7 @@ module.exports = bb.DualModel = IDBModel.extend({
   },
 
   parse: function( resp, options ) {
+    options = options || {};
     if( options.remote ){
       resp = resp && resp[this.name] ? resp[this.name] : resp;
       resp._state = undefined;

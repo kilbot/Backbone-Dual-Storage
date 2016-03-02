@@ -6,7 +6,7 @@ module.exports = function (config) {
 
     files: [
       'node_modules/jquery/dist/jquery.js',
-      'node_modules/lodash/lodash.js',
+      'node_modules/lodash/index.js',
       'node_modules/backbone/backbone.js',
       'dist/backbone-dual-storage.js',
       'test/spec.js'

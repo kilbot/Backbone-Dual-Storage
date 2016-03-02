@@ -156,6 +156,7 @@
 	  },
 
 	  parse: function( resp, options ) {
+	    options = options || {};
 	    if( options.remote ){
 	      resp = resp && resp[this.name] ? resp[this.name] : resp;
 	    }
@@ -193,67 +194,8 @@
 	        }
 	        return response;
 	      });
-	      //.then( function( response ){
-	        //if( options.remove ){
-	        //  var ids = _.map( response, 'id' );
-	        //  return self.removeGarbage( ids, options );
-	        //}
-	      //});
 	  },
 
-	  //saveBatch: function( models, options ){
-	  //  options = options || {};
-	  //  if( options.remote ){
-	  //    return this.saveRemoteBatch( models, options );
-	  //  }
-	  //  return this.saveLocalBatch( models, options );
-	  //},
-	  //
-	  //saveLocalBatch: function( models, options ){
-	  //  models = _.map( models, function( model ){
-	  //    if( model instanceof bb.Model ){
-	  //      model = model.toJSON();
-	  //    }
-	  //    if( ! model[ this.getRemoteIdAttribute() ] ){
-	  //      model._state = this.states.create;
-	  //    }
-	  //    return model;
-	  //  }.bind(this));
-	  //  return IDBCollection.prototype.saveBatch.call( this, models, options );
-	  //},
-	  //
-	  //saveRemoteBatch: function(){},
-	  //
-	  //parse: function( resp, options ){
-	  //  options = options || {};
-	  //  resp = resp && resp[this.name] ? resp[this.name] : resp;
-	  //  if( options.remote ){
-	  //    resp = _.map( resp, function( attrs ){
-	  //      return this.mergeModels( attrs, options );
-	  //    }.bind(this));
-	  //  }
-	  //  return IDBCollection.prototype.parse.call( this, resp, options );
-	  //},
-	  //
-	  ///* jshint -W074 */
-	  //mergeModels: function( attrs, options ){
-	  //  var model = this.findByRemoteId( attrs );
-	  //
-	  //  if( options.remoteIds ){
-	  //    if( ! model || attrs.last_updated > model.get('last_updated') ){
-	  //      attrs._state = this.states.read;
-	  //    }
-	  //  }
-	  //
-	  //  if( model && model.id ){
-	  //    //attrs = _.extend( model.toJSON(), attrs );
-	  //    attrs = _.extend( model.attributes, attrs );
-	  //  }
-	  //
-	  //  return attrs;
-	  //},
-	  ///* jshint +W074 */
-	  //
 	  fetchRemoteIds: function( last_update, options ){
 	    options = options || {};
 	    var self = this, url = _.result(this, 'url') + '/ids';
@@ -280,7 +222,7 @@
 	            keyPath: 'id',
 	            merge: function( local, remote ){
 	              var updated_at = _.has(local, 'updated_at') ? local.updated_at : undefined;
-	              var data = _.merge( local, remote );
+	              var data = _.merge( {}, local, remote );
 	              if( _.isUndefined( data.local_id ) || updated_at !== data.updated_at ){
 	                data._state = self.states.read;
 	              }
@@ -301,40 +243,6 @@
 	        return self.fetchRemoteIds( last_update, options );
 	      });
 	  }
-	  //
-	  //removeGarbage: function( remoteIds, options ){
-	  //  var self = this, models,
-	  //    remoteIdAttribute = this.getRemoteIdAttribute();
-	  //
-	  //  remoteIds = _.isArray( remoteIds ) ? remoteIds : [remoteIds];
-	  //  this.fetch()
-	  //    .then( function() {
-	  //      models = self.filter( function( model ) {
-	  //        return model.get(remoteIdAttribute) &&
-	  //          ! _.includes( remoteIds, model.get(remoteIdAttribute) );
-	  //      });
-	  //      return self.removeBatch( models, options );
-	  //    });
-	  //},
-	  //
-	  //removeBatch: function(){
-	  //  return IDBCollection.prototype.removeBatch.apply( this, arguments );
-	  //},
-	  //
-	  //getIdAttribute: function(){
-	  //  return 'local_id';
-	  //},
-	  //
-	  //getRemoteIdAttribute: function(){
-	  //  return 'id';
-	  //},
-	  //
-	  //findByRemoteId: function( attrs ){
-	  //  var attr = {};
-	  //  var remoteIdAttribute = this.getRemoteIdAttribute();
-	  //  attr[remoteIdAttribute] = attrs[remoteIdAttribute];
-	  //  return this.findWhere(attr);
-	  //}
 
 	});
 
@@ -452,7 +360,6 @@
 	  navigator.userAgent.indexOf('Android') === -1;
 
 	var indexedDB = window.indexedDB;
-	var Promise = window.Promise;
 
 	var consts = {
 	  'READ_ONLY'         : 'readonly',
@@ -686,7 +593,10 @@
 
 	  merge: function (data, options) {
 	    options = options || {};
-	    var self = this, keyPath = options.index, fn = _.merge;
+	    var self = this, keyPath = options.index,
+	        fn = function(result, data){
+	          return _.merge({}, result, data); // waiting for lodash 4
+	        };
 
 	    if(_.isObject(options.index)){
 	      keyPath = _.get(options, ['index', 'keyPath'], this.opts.keyPath);
@@ -804,7 +714,8 @@
 	      }
 
 	      request.onsuccess = function (event) {
-	        resolve(event.target.result.key);
+	        var value = _.get(event, ['target', 'result', 'key']);
+	        resolve(value);
 	      };
 
 	      request.onerror = function (event) {
@@ -931,6 +842,7 @@
 	  },
 
 	  parse: function( resp, options ) {
+	    options = options || {};
 	    if( options.remote ){
 	      resp = resp && resp[this.name] ? resp[this.name] : resp;
 	      resp._state = undefined;
