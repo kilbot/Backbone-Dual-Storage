@@ -1,5 +1,5 @@
 var bb = require('backbone');
-var IDBCollection = require('../backbone-indexeddb/src/idb-collection');
+var IDBCollection = require('backbone-indexeddb/src/idb-collection');
 var DualModel = require('./dual-model');
 var _ = require('lodash');
 

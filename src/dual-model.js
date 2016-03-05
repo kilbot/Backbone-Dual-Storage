@@ -1,5 +1,5 @@
 var bb = require('backbone');
-var IDBModel = require('../backbone-indexeddb/src/idb-model');
+var IDBModel = require('backbone-indexeddb/src/idb-model');
 var _ = require('lodash');
 
 module.exports = bb.DualModel = IDBModel.extend({
