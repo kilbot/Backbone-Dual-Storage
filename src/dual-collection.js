@@ -105,7 +105,7 @@ module.exports = bb.DualCollection = IDBCollection.extend({
             keyPath: 'id',
             merge  : function (local, remote) {
               var updated_at = _.has(local, 'updated_at') ? local.updated_at : undefined;
-              var data = _.merge(local, remote);
+              var data = _.merge({}, local, remote);
               if (_.isUndefined(data.local_id) || updated_at !== data.updated_at) {
                 data._state = self.states.read;
               }
