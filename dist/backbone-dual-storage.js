@@ -230,7 +230,7 @@
 	            keyPath: 'id',
 	            merge  : function (local, remote) {
 	              var updated_at = _.has(local, 'updated_at') ? local.updated_at : undefined;
-	              var data = _.merge({}, local, remote);
+	              var data = _.merge(local, remote);
 	              if (_.isUndefined(data.local_id) || updated_at !== data.updated_at) {
 	                data._state = self.states.read;
 	              }
@@ -617,7 +617,7 @@
 	    options = options || {};
 	    var self = this, keyPath = options.index;
 	    var fn = function(result, data){
-	      return _.merge({}, result, data); // waiting for lodash 4
+	      return _.merge(result, data);
 	    };
 
 	    if(_.isObject(options.index)){
