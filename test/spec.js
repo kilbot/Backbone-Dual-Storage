@@ -165,7 +165,8 @@ describe('Backbone.DualCollection', function () {
 
     // mock server response
     var response = JSON.stringify({test: {id: 1, foo: 'bar'}});
-    this.server.respondWith('POST', '/test', [200, {"Content-Type": "application/json"},
+    var server = this.server;
+    server.respondWith('POST', '/test', [200, {"Content-Type": "application/json"},
       response
     ]);
 
@@ -181,6 +182,11 @@ describe('Backbone.DualCollection', function () {
       success: function (m, response, options) {
         expect(m).eqls(model);
         expect(m.get('id')).to.equal(1);
+
+        //
+        var request = server.requests[0];
+        var postData = JSON.parse(request.requestBody);
+        expect(postData).eqls({test: {foo: 'bar'}});
 
         // note: response is coming from idb not ajax
         // expect( response ).eqls( ajaxResponse );
@@ -355,6 +361,7 @@ describe('Backbone.DualCollection', function () {
       .catch(done);
 
   });
+
   //
   //it('should remove garbage', function( done ){
   //
