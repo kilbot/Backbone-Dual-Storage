@@ -44,11 +44,33 @@ module.exports = bb.DualCollection = IDBCollection.extend({
   },
 
   fetch: function (options) {
+    var self = this, isNew = this.isNew();
     options = options || {};
     if (options.remote) {
       return this.fetchRemote(options);
     }
-    return IDBCollection.prototype.fetch.call(this, options);
+    return IDBCollection.prototype.fetch.call(this, options)
+      .then(function (response) {
+        if (isNew && _.size(response) === 0) {
+          return self.firstSync();
+        }
+      });
+  },
+
+  firstSync: function(options){
+    var self = this;
+    return this.fetchRemote(options)
+      .then(function () {
+        return self.fullSync(options);
+      });
+  },
+
+  fullSync: function(options){
+    var self = this;
+    return this.fetchRemoteIds(options)
+      .then(function () {
+        return self.count();
+      });
   },
 
   fetchRemote: function (options) {

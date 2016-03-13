@@ -46,7 +46,7 @@
 
 	var bb = __webpack_require__(1);
 	bb.sync = __webpack_require__(2);
-	__webpack_require__(4);
+	module.exports = __webpack_require__(4);
 
 /***/ },
 /* 1 */
@@ -169,11 +169,33 @@
 	  },
 
 	  fetch: function (options) {
+	    var self = this, isNew = this.isNew();
 	    options = options || {};
 	    if (options.remote) {
 	      return this.fetchRemote(options);
 	    }
-	    return IDBCollection.prototype.fetch.call(this, options);
+	    return IDBCollection.prototype.fetch.call(this, options)
+	      .then(function (response) {
+	        if (isNew && _.size(response) === 0) {
+	          return self.firstSync();
+	        }
+	      });
+	  },
+
+	  firstSync: function(options){
+	    var self = this;
+	    return this.fetchRemote(options)
+	      .then(function () {
+	        return self.fullSync(options);
+	      });
+	  },
+
+	  fullSync: function(options){
+	    var self = this;
+	    return this.fetchRemoteIds(options)
+	      .then(function () {
+	        return self.count();
+	      });
 	  },
 
 	  fetchRemote: function (options) {
@@ -263,8 +285,22 @@
 	var IDBModel = __webpack_require__(8);
 	var _ = __webpack_require__(7);
 
+	var Collection = bb.Collection.extend({
+	  constructor: function() {
+	    bb.Collection.apply(this, arguments);
+	    this._isNew = true;
+	    this.once('sync', function() {
+	      this._isNew = false;
+	    });
+	  },
+
+	  isNew: function() {
+	    return this._isNew;
+	  }
+	});
+
 	// attach to Backbone
-	module.exports = bb.IDBCollection = bb.Collection.extend({
+	module.exports = bb.IDBCollection = Collection.extend({
 
 	  model: IDBModel,
 
@@ -304,6 +340,10 @@
 	    return this.db.open()
 	      .then(function () {
 	        return self.db.count();
+	      })
+	      .then(function (count) {
+	        self.trigger('count', count);
+	        return count;
 	      });
 	  },
 
@@ -617,7 +657,7 @@
 	    options = options || {};
 	    var self = this, keyPath = options.index;
 	    var fn = function(result, data){
-	      return _.merge(result, data);
+	      return _.merge({}, result, data);
 	    };
 
 	    if(_.isObject(options.index)){
@@ -691,8 +731,10 @@
 	    options = options || {};
 	    var objectStore = options.objectStore || this.getObjectStore(consts.READ_ONLY),
 	        limit = _.get(options, ['filter', 'limit'], this.opts.pageSize),
+	        offset = _.get(options, ['filter', 'offset'], 0),
 	        include = _.get(options, ['filter', 'in']),
 	        keyPath = options.index || this.opts.keyPath,
+	        page = options.page,
 	        self = this;
 
 	    if(_.isObject(keyPath)){
@@ -701,6 +743,10 @@
 
 	    if (limit === -1) {
 	      limit = Infinity;
+	    }
+
+	    if(page){
+	      offset = (page - 1) * limit;
 	    }
 
 	    return new Promise(function (resolve, reject) {
@@ -712,11 +758,12 @@
 	        request = openIndex.openCursor();
 	      }
 	      var records = [];
+	      var idx = 0;
 
 	      request.onsuccess = function (event) {
 	        var cursor = event.target.result;
 	        if (cursor && records.length < limit) {
-	          if(!include || include.indexOf(cursor.value[keyPath]) !== -1){
+	          if( (!include || include.indexOf(cursor.value[keyPath]) !== -1 ) && ++idx > offset){
 	            records.push(cursor.value);
 	          }
 	          return cursor.continue();

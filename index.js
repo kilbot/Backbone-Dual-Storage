@@ -1,3 +1,3 @@
 var bb = require('backbone');
 bb.sync = require('./src/sync');
-require('./src/dual-collection');
+module.exports = require('./src/dual-collection');
