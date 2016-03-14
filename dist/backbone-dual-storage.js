@@ -169,60 +169,48 @@
 	  },
 
 	  fetch: function (options) {
-	    var self = this, isNew = this.isNew();
 	    options = options || {};
-	    if (options.remote) {
-	      return this.fetchRemote(options);
-	    }
-	    return IDBCollection.prototype.fetch.call(this, options)
+	    var self = this, _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
+
+	    return _fetch.apply(this, arguments)
 	      .then(function (response) {
-	        if (isNew && _.size(response) === 0) {
-	          return self.firstSync();
-	        }
-	      });
-	  },
-
-	  firstSync: function(options){
-	    var self = this;
-	    return this.fetchRemote(options)
-	      .then(function () {
-	        return self.fullSync(options);
-	      });
-	  },
-
-	  fullSync: function(options){
-	    var self = this;
-	    return this.fetchRemoteIds(options)
-	      .then(function () {
-	        return self.count();
-	      });
-	  },
-
-	  fetchRemote: function (options) {
-	    options = options || {};
-	    var self = this;
-	    var opts = _.extend({}, options, {
-	      remove : false,
-	      remote : true,
-	      success: undefined
-	    });
-
-	    return this.sync('read', this, opts)
-	      .then(function (response) {
-	        response = self.parse(response, opts);
-	        return self.putBatch(response, {
-	          index: 'id'
-	        });
-	      })
-	      .then(function (keys) {
-	        return self.getBatch(keys);
-	      })
-	      .then(function (response) {
-	        self.set(response, {remove: false});
+	        self.set(response, options);
 	        if (options.success) {
 	          options.success.call(options.context, self, response, options);
 	        }
 	        return response;
+	      });
+	  },
+
+	  /**
+	   *
+	   */
+	  fetchLocal: function (options) {
+	    var self = this;
+	    options = options || {};
+
+	    return IDBCollection.prototype.getBatch.call(this, null, options.data)
+	      .then(function (response) {
+	        return self.fetchDelayed(response);
+	      });
+	  },
+
+	  /**
+	   * Get remote data and merge with local data on id
+	   * returns merged data
+	   */
+	  fetchRemote: function (options) {
+	    var self = this, opts = _.clone(options) || {};
+	    opts.remote = true;
+	    opts.success = undefined;
+
+	    return this.sync('read', this, opts)
+	      .then(function (response) {
+	        response = self.parse(response, opts);
+	        return self.putBatch(response, { index: 'id' });
+	      })
+	      .then(function (keys) {
+	        return self.getBatch(keys);
 	      });
 	  },
 
@@ -251,12 +239,11 @@
 	          index: {
 	            keyPath: 'id',
 	            merge  : function (local, remote) {
-	              var updated_at = _.has(local, 'updated_at') ? local.updated_at : undefined;
-	              var data = _.merge({}, local, remote);
-	              if (_.isUndefined(data.local_id) || updated_at !== data.updated_at) {
-	                data._state = self.states.read;
+	              if(!local || local.updated_at !== remote.updated_at){
+	                local = local || remote;
+	                local._state = self.states.read;
 	              }
-	              return data;
+	              return local;
 	            }
 	          }
 	        });
@@ -272,6 +259,51 @@
 	      .then(function (last_update) {
 	        return self.fetchRemoteIds(last_update, options);
 	      });
+	  },
+
+	  firstSync: function(options){
+	    var self = this;
+	    return this.fetch({ remote: true })
+	      .then(function () {
+	        return self.fullSync(options);
+	      });
+	  },
+
+	  fullSync: function(options){
+	    var self = this;
+	    return this.fetchRemoteIds(options)
+	      .then(function () {
+	        return self.count();
+	      });
+	  },
+
+	  fetchDelayed: function(response){
+	    var delayed = this.getDelayed('read', response);
+	    if(delayed){
+	      var ids = _.map(delayed, 'id');
+	      return this.fetchRemote({ data: { 'in': ids.join(',') } })
+	        .then(function(resp){
+	          _.each(resp, function(attrs){
+	            var key = _.findKey(response, {id: attrs.id});
+	            if(key){
+	              response[key] = attrs;
+	            } else {
+	              response.push(resp);
+	            }
+	          });
+	          return response;
+	        });
+	    }
+	    return response;
+	  },
+
+	  getDelayed: function(state, collection){
+	    var delayed, _state = this.states[state];
+	    collection = collection || this;
+	    delayed = _.filter(collection, {_state: _state});
+	    if(!_.isEmpty(delayed)){
+	      return delayed;
+	    }
 	  }
 
 	});
@@ -317,7 +349,7 @@
 
 	    this.db = new IDBAdapter(opts);
 
-	    bb.Collection.apply(this, arguments);
+	    Collection.apply(this, arguments);
 	  },
 
 	  /**
@@ -656,12 +688,17 @@
 	  merge: function (data, options) {
 	    options = options || {};
 	    var self = this, keyPath = options.index;
-	    var fn = function(result, data){
-	      return _.merge({}, result, data);
+	    var primaryKey = this.opts.keyPath;
+
+	    var fn = function(local, remote, keyPath){
+	      if(local){
+	        remote[keyPath] = local[keyPath];
+	      }
+	      return remote;
 	    };
 
 	    if(_.isObject(options.index)){
-	      keyPath = _.get(options, ['index', 'keyPath'], this.opts.keyPath);
+	      keyPath = _.get(options, ['index', 'keyPath'], primaryKey);
 	      if(_.isFunction(options.index.merge)){
 	        fn = options.index.merge;
 	      }
@@ -669,7 +706,7 @@
 
 	    return this.getByIndex(keyPath, data[keyPath], options)
 	      .then(function(result){
-	        return self.put(fn(result, data));
+	        return self.put(fn(result, data, primaryKey));
 	      });
 	  },
 
@@ -693,13 +730,12 @@
 	  },
 
 	  getBatch: function (keyArray, options) {
-	    if(_.isArray(keyArray)){
-	      options = options || {};
-	      options.filter = _.merge({in: keyArray}, options.filter);
-	    } else {
-	      options = keyArray || {};
-	    }
+	    options = options || keyArray || {};
 	    var self = this, objectStore = options.objectStore || this.getObjectStore(consts.READ_ONLY);
+
+	    if(_.isArray(keyArray)){
+	      options.filter = _.merge({in: keyArray}, options.filter);
+	    }
 
 	    if (objectStore.getAll === undefined || this.hasGetParams(options)) {
 	      if(!options.objectStore){

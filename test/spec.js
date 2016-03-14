@@ -24,18 +24,7 @@ describe('Backbone.DualCollection', function () {
         expect(model.get('_state')).to.equal(collection.states.create);
         expect(response.foo).to.equal('bar');
         expect(options.special).to.be.true;
-
-        collection.fetch({
-          reset  : true,
-          special: true,
-          error  : done,
-          success: function (collection, response, options) {
-            expect(collection.at(0).attributes).to.eql(model.attributes);
-            expect(response).to.eql([model.attributes]);
-            expect(options.special).to.be.true;
-            done();
-          }
-        });
+        done();
       }
     });
 
@@ -55,18 +44,7 @@ describe('Backbone.DualCollection', function () {
             expect(model.get('foo')).to.equal('baz');
             expect(response.foo).to.equal('baz');
             expect(options.special).to.be.true;
-
-            collection.fetch({
-              reset  : true,
-              special: true,
-              error  : done,
-              success: function (collection, response, options) {
-                expect(collection.at(0).attributes).eqls(model.attributes);
-                expect(response).to.eql([model.attributes]);
-                expect(options.special).to.be.true;
-                done();
-              }
-            });
+            done();
           }
         });
       }
@@ -216,7 +194,6 @@ describe('Backbone.DualCollection', function () {
     collection.url = '/test';
     collection.name = 'nested';
 
-
     collection.putBatch([
         {id: 1, foo: 'bar'},
         {id: 2, foo: 'baz'},
@@ -228,8 +205,9 @@ describe('Backbone.DualCollection', function () {
       })
       .then(function () {
         expect(collection).to.have.length(3);
-        collection.fetch({
+        return collection.fetch({
           remote : true,
+          remove : false,
           special: true,
           error  : done,
           success: function (collection, response, options) {
@@ -299,21 +277,18 @@ describe('Backbone.DualCollection', function () {
       })
       .then(function (response) {
         expect(response).to.have.length(3);
+        return collection.getBatch(response);
+      })
+      .then(function (response) {
+        expect(response).to.have.length(3);
 
-        collection.fetch({
-          error  : done,
-          success: function (collection) {
-            expect(collection).to.have.length(3);
+        var read = collection.states.read;
+        expect(_.map(response, '_state')).eqls([undefined, undefined, read]);
 
-            var read = collection.states.read;
-            expect(collection.map('_state')).eqls([undefined, undefined, read]);
+        var model = _.find(response, {id: 1});
+        expect(model.foo).equals('bar');
 
-            var model = collection.findWhere({id: 1});
-            expect(model.get('foo')).equals('bar');
-
-            done();
-          }
-        });
+        done();
       })
       .catch(done);
 
@@ -346,19 +321,76 @@ describe('Backbone.DualCollection', function () {
       })
       .then(function (response) {
         expect(response).to.have.length(2);
+        return collection.getBatch();
+      })
+      .then(function (response) {
+        expect(response).to.have.length(4);
 
-        collection.fetch({
-          error  : done,
-          success: function (collection) {
-            expect(collection).to.have.length(4);
-            var read = collection.states.read;
-            expect(collection.map('_state')).eqls([undefined, read, undefined, read]);
-            done();
-          }
-        });
+        var read = collection.states.read;
+        expect(_.map(response, '_state')).eqls([undefined, read, undefined, read]);
 
+        done();
       })
       .catch(done);
+
+  });
+
+  it('should fetch read delayed models', function(done){
+
+    // mock server response
+    var response = JSON.stringify({
+      nested: [
+        {id: 2, foo: 'bam'},
+        {id: 3, foo: 'bap'}
+      ]
+    });
+    this.server.respondWith('GET', /^\/test\?.*$/, [200, {"Content-Type": "application/json"},
+      response
+    ]);
+
+    // tools for checking the url query params
+    var server = this.server;
+    var parse = function(url){
+      var parser = /([^=?&]+)=([^&]*)/g
+        , result = {}
+        , part;
+
+      for (;
+        part = parser.exec(url);
+        result[decodeURIComponent(part[1])] = decodeURIComponent(part[2])
+      );
+
+      return result;
+    };
+
+    var collection = new Backbone.DualCollection();
+    collection.url = '/test';
+    collection.name = 'nested';
+
+    collection.putBatch([
+      {id: 1, foo: 'bar'},
+      {id: 2, foo: 'baz', _state: 'READ_FAILED'},
+      {id: 3, foo: 'boo', _state: 'READ_FAILED'}
+    ])
+    .then(function (response) {
+      expect(response).to.have.length(3);
+      collection.fetch({
+        special: true,
+        success: function(collection, response, options){
+          var query = parse( server.requests[0].url );
+          expect(query.in).eqls('2,3');
+
+          expect(response).to.have.length(3);
+          expect(collection).to.have.length(3);
+          expect(collection.map('foo')).eqls(['bar', 'bam', 'bap']);
+          expect(collection.map('_state')).eqls([undefined, undefined, undefined]);
+          expect(options.special).to.be.true;
+
+          done();
+        }
+      });
+    })
+    .catch(done);
 
   });
 
