@@ -378,7 +378,7 @@ describe('Backbone.DualCollection', function () {
         special: true,
         success: function(collection, response, options){
           var query = parse( server.requests[0].url );
-          expect(query.in).eqls('2,3');
+          expect(query['filter[in]']).eqls('2,3');
 
           expect(response).to.have.length(3);
           expect(collection).to.have.length(3);
