@@ -44,7 +44,8 @@ module.exports = function(IDBCollection){
       options = _.extend({parse: true}, options);
       var self = this, _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
 
-      return _fetch.apply(this, arguments)
+      this.trigger('request', this, null, options);
+      return _fetch.call(this, options)
         .then(function (response) {
           var method = options.reset ? 'reset' : 'set';
           self[method](response, options);
@@ -63,9 +64,15 @@ module.exports = function(IDBCollection){
       var self = this;
       options = options || {};
 
-      return this.getBatch.call(this, null, options.data)
+      return IDBCollection.prototype.getBatch.call(this, null, options.data)
         .then(function (response) {
-          return self.fetchDelayed(response);
+          if(_.size(response) > 0){
+            return self.fetchDelayed(response);
+          }
+          if(self.isNew()){
+            return self.firstSync();
+          }
+          return response;
         });
     },
 
@@ -136,10 +143,14 @@ module.exports = function(IDBCollection){
     },
 
     firstSync: function(options){
-      var self = this;
-      return this.fetch({ remote: true })
-        .then(function () {
+      var self = this, response;
+      return this.fetchRemote()
+        .then(function (resp) {
+          response = resp;
           return self.fullSync(options);
+        })
+        .then(function () {
+          return response;
         });
     },
 
