@@ -497,49 +497,19 @@
 	  },
 
 	  getBatch: function (keyArray, options) {
-	    options = options || keyArray || {};
-	    var self = this, objectStore = options.objectStore || this.getObjectStore(consts.READ_ONLY);
-
-	    if(_.isArray(keyArray)){
-	      options.filter = _.merge({in: keyArray}, options.filter);
+	    if(!options && !_.isArray(keyArray)){
+	      options = keyArray;
 	    }
-
-	    if (objectStore.getAll === undefined || this.hasGetParams(options)) {
-	      if(!options.objectStore){
-	        options.objectStore = objectStore;
-	      }
-	      return this.getAll(options);
-	    }
-
-	    var limit = _.get(options, ['filter', 'limit'], this.opts.pageSize);
-	    if (limit === -1) {
-	      limit = null; // firefox doesn't like -1 or Infinity
-	    }
-
-	    return new Promise(function (resolve, reject) {
-	      var request = objectStore.getAll(null, limit);
-
-	      request.onsuccess = function (event) {
-	        resolve(event.target.result);
-	      };
-
-	      request.onerror = function (event) {
-	        options._error = {event: event, message: 'getAll error', callback: reject};
-	        self.opts.onerror(options);
-	      };
-	    });
-	  },
-
-	  getAll: function (options) {
 	    options = options || {};
+
 	    var objectStore = options.objectStore || this.getObjectStore(consts.READ_ONLY),
-	        limit = _.get(options, ['filter', 'limit'], this.opts.pageSize),
-	        offset = _.get(options, ['filter', 'offset'], 0),
-	        include = _.get(options, ['filter', 'in']),
-	        query = _.get(options, ['filter', 'q']),
+	        include = _.isArray(keyArray) ? keyArray: _.get(options, ['data', 'filter', 'in']),
+	        limit   = _.get(options, ['data', 'filter', 'limit'], this.opts.pageSize),
+	        offset  = _.get(options, ['data', 'filter', 'offset'], 0),
+	        query   = _.get(options, ['data', 'filter', 'q']),
 	        keyPath = options.index || this.opts.keyPath,
-	        page = options.page,
-	        self = this;
+	        page    = _.get(options, ['data', 'page']),
+	        self    = this;
 
 	    if(_.isObject(keyPath)){
 	      keyPath = keyPath.keyPath;
@@ -554,23 +524,23 @@
 	    }
 
 	    return new Promise(function (resolve, reject) {
-	      var records = [], idx = 0;
+	      var records = [];
 	      var request = (keyPath === self.opts.keyPath) ?
 	        objectStore.openCursor() : objectStore.index(keyPath).openCursor();
 
 	      request.onsuccess = function (event) {
 	        var cursor = event.target.result;
-	        if (cursor && records.length < limit) {
+	        if (cursor) {
 	          if(
 	            (!include || _.includes(include, cursor.value[keyPath])) &&
-	            (!query || self._match(query, cursor.value, keyPath, options)) &&
-	            ++idx > offset
+	            (!query || self._match(query, cursor.value, keyPath, options))
 	          ){
 	            records.push(cursor.value);
 	          }
 	          return cursor.continue();
 	        }
-	        resolve(records);
+	        _.set(options, 'idb.total', records.length);
+	        resolve(_.slice(records, offset, offset + limit));
 	      };
 
 	      request.onerror = function (event) {
@@ -624,29 +594,8 @@
 	    });
 	  },
 
-	  /**
-	   * data: {
-	   *  filter: {
-	   *    limit: -1,
-	   *    offset: 10,
-	   *    q: 'term'
-	   *    ...
-	   *  },
-	   *  fields: ['id', '_state'],
-	   *  page: 2
-	   * }
-	   */
-	  hasGetParams: function(options){
-	    options = options || {};
-	    if(options.page || options.fields || _.size(options.filter) > 1 ||
-	      (_.size(options.filter) === 1 && options.filter.limit === undefined)){
-	      return true;
-	    }
-	    return false;
-	  },
-
 	  _match: function(query, json, keyPath, options){
-	    var fields = _.get(options, ['filter', 'fields'], keyPath);
+	    var fields = _.get(options, ['data', 'filter', 'fields'], keyPath);
 	    return this.opts.matchMaker.call(this, json, query, {fields: fields});
 	  }
 
@@ -931,15 +880,20 @@
 
 	    fetch: function (options) {
 	      options = _.extend({parse: true}, options);
-	      var self = this, _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
+	      var self = this, success = options.success;
+	      var _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
+
+	      if(success){
+	        options.success = undefined;
+	      }
 
 	      this.trigger('request', this, null, options);
 	      return _fetch.call(this, options)
 	        .then(function (response) {
 	          var method = options.reset ? 'reset' : 'set';
 	          self[method](response, options);
-	          if (options.success) {
-	            options.success.call(options.context, self, response, options);
+	          if (success) {
+	            success.call(options.context, self, response, options);
 	          }
 	          self.trigger('sync', self, response, options);
 	          return response;
@@ -953,7 +907,7 @@
 	      var self = this;
 	      options = options || {};
 
-	      return IDBCollection.prototype.getBatch.call(this, null, options.data)
+	      return IDBCollection.prototype.getBatch.call(this, options)
 	        .then(function (response) {
 	          if(_.size(response) > 0){
 	            return self.fetchDelayed(response);
@@ -961,7 +915,7 @@
 	          if(self.isNew()){
 	            return self.firstSync();
 	          }
-	          return response;
+	          return self.fetchRemote(options);
 	        });
 	    },
 
@@ -970,13 +924,12 @@
 	     * returns merged data
 	     */
 	    fetchRemote: function (options) {
-	      var self = this, opts = _.clone(options) || {};
-	      opts.remote = true;
-	      opts.success = undefined;
+	      options = _.extend({remote: true}, options);
+	      var self = this;
 
-	      return this.sync('read', this, opts)
+	      return this.sync('read', this, options)
 	        .then(function (response) {
-	          response = self.parse(response, opts);
+	          response = self.parse(response, options);
 	          return self.putBatch(response, { index: 'id' });
 	        })
 	        .then(function (keys) {
@@ -1044,11 +997,7 @@
 	    },
 
 	    fullSync: function(options){
-	      var self = this;
-	      return this.fetchRemoteIds(options)
-	        .then(function () {
-	          return self.count();
-	        });
+	      return this.fetchRemoteIds(options);
 	    },
 
 	    fetchDelayed: function(response){
@@ -1110,11 +1059,9 @@
 /***/ function(module, exports, __webpack_require__) {
 
 	var bb = __webpack_require__(1);
-	var _ = __webpack_require__(3);
 
 	/* jshint -W074 */
 	module.exports = function(method, entity, options) {
-	  options = options || {};
 	  var isModel = entity instanceof bb.Model;
 
 	  return entity.db.open()
@@ -1124,8 +1071,7 @@
 	          if (isModel) {
 	            return entity.db.get(entity.id);
 	          }
-	          var data = _.clone(options.data);
-	          return entity.db.getBatch(data);
+	          return entity.db.getBatch(options);
 	        case 'create':
 	          return entity.db.add(entity.toJSON())
 	            .then(function (key) {

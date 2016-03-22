@@ -394,6 +394,28 @@ describe('Backbone.DualCollection', function () {
 
   });
 
+  it('should return the total number of records for local fetch', function(done){
+
+    var collection = new Backbone.DualCollection();
+
+    collection.putBatch([
+        {id: 1, foo: 'bar'},
+        {id: 2, foo: 'baz'},
+        {id: 3, foo: 'boo'}
+      ])
+      .then(function (response) {
+        expect(response).to.have.length(3);
+        collection.fetch({
+          special: true,
+          success: function(collection, response, options){
+            expect(_.get(options, ['idb', 'total'])).eqls(3);
+            done();
+          }
+        });
+      })
+      .catch(done);
+  });
+
   //
   //it('should remove garbage', function( done ){
   //

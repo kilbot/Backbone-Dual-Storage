@@ -42,15 +42,20 @@ module.exports = function(IDBCollection){
 
     fetch: function (options) {
       options = _.extend({parse: true}, options);
-      var self = this, _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
+      var self = this, success = options.success;
+      var _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
+
+      if(success){
+        options.success = undefined;
+      }
 
       this.trigger('request', this, null, options);
       return _fetch.call(this, options)
         .then(function (response) {
           var method = options.reset ? 'reset' : 'set';
           self[method](response, options);
-          if (options.success) {
-            options.success.call(options.context, self, response, options);
+          if (success) {
+            success.call(options.context, self, response, options);
           }
           self.trigger('sync', self, response, options);
           return response;
@@ -64,7 +69,7 @@ module.exports = function(IDBCollection){
       var self = this;
       options = options || {};
 
-      return IDBCollection.prototype.getBatch.call(this, null, options.data)
+      return IDBCollection.prototype.getBatch.call(this, options)
         .then(function (response) {
           if(_.size(response) > 0){
             return self.fetchDelayed(response);
@@ -72,7 +77,7 @@ module.exports = function(IDBCollection){
           if(self.isNew()){
             return self.firstSync();
           }
-          return response;
+          return self.fetchRemote(options);
         });
     },
 
@@ -81,13 +86,12 @@ module.exports = function(IDBCollection){
      * returns merged data
      */
     fetchRemote: function (options) {
-      var self = this, opts = _.clone(options) || {};
-      opts.remote = true;
-      opts.success = undefined;
+      options = _.extend({remote: true}, options);
+      var self = this;
 
-      return this.sync('read', this, opts)
+      return this.sync('read', this, options)
         .then(function (response) {
-          response = self.parse(response, opts);
+          response = self.parse(response, options);
           return self.putBatch(response, { index: 'id' });
         })
         .then(function (keys) {
@@ -155,11 +159,7 @@ module.exports = function(IDBCollection){
     },
 
     fullSync: function(options){
-      var self = this;
-      return this.fetchRemoteIds(options)
-        .then(function () {
-          return self.count();
-        });
+      return this.fetchRemoteIds(options);
     },
 
     fetchDelayed: function(response){
