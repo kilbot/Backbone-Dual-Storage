@@ -878,6 +878,7 @@
 	      return IDBCollection.prototype.parse.call(this, resp, options);
 	    },
 
+	    /* jshint -W071, -W074 */
 	    fetch: function (options) {
 	      options = _.extend({parse: true}, options);
 	      var self = this, success = options.success;
@@ -895,10 +896,20 @@
 	          if (success) {
 	            success.call(options.context, self, response, options);
 	          }
+	          if(options.idb){
+	            self.total = options.idb.total;
+	            self.delayed = options.idb.delayed;
+	            self._hasNextPage = self.length < self.total || self.delayed > 0;
+	          }
+	          if(options.xhr){
+	            self.total = options.xhr.getResponseHeader('X-WC-Total');
+	            self._hasNextPage = self.length < self.total;
+	          }
 	          self.trigger('sync', self, response, options);
 	          return response;
 	        });
 	    },
+	    /* jshint +W071, +W074 */
 
 	    /**
 	     *
@@ -913,7 +924,7 @@
 	            return self.fetchDelayed(response);
 	          }
 	          if(self.isNew()){
-	            return self.firstSync();
+	            return self.firstSync(options);
 	          }
 	          return self.fetchRemote(options);
 	        });
@@ -924,7 +935,9 @@
 	     * returns merged data
 	     */
 	    fetchRemote: function (options) {
-	      options = _.extend({remote: true}, options);
+	      // options = _.extend({remote: true}, options);
+	      options = options || {};
+	      options.remote = true;
 	      var self = this;
 
 	      return this.sync('read', this, options)
@@ -985,13 +998,10 @@
 	    },
 
 	    firstSync: function(options){
-	      var self = this, response;
-	      return this.fetchRemote()
-	        .then(function (resp) {
-	          response = resp;
-	          return self.fullSync(options);
-	        })
-	        .then(function () {
+	      var self = this;
+	      return this.fetchRemote(options)
+	        .then(function (response) {
+	          self.fullSync();
 	          return response;
 	        });
 	    },
