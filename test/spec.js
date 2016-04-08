@@ -194,15 +194,11 @@ describe('Backbone.DualCollection', function () {
     collection.url = '/test';
     collection.name = 'nested';
 
-    collection.putBatch([
+    collection.save([
         {id: 1, foo: 'bar'},
         {id: 2, foo: 'baz'},
         {id: 3, foo: 'boo'}
       ])
-      .then(function (records) {
-        expect(records).to.have.length(3);
-        return collection.fetch();
-      })
       .then(function () {
         expect(collection).to.have.length(3);
         return collection.fetch({
@@ -238,18 +234,15 @@ describe('Backbone.DualCollection', function () {
 
     collection.fetchRemoteIds()
       .then(function (response) {
-        // returns local_ids
         expect(response).to.have.length(3);
-      })
-      .then(function () {
-        return collection.db.getBatch();
-      })
-      .then(function (response) {
+        expect(collection).to.have.length(0);
+
         var read = collection.states.read;
         _.each(response, function (model) {
           expect(model.local_id).not.to.be.undefined;
           expect(model._state).eqls(read);
         });
+
         done();
       })
       .catch(done);
@@ -268,16 +261,12 @@ describe('Backbone.DualCollection', function () {
     collection.url = '/test';
     collection.name = 'nested';
 
-    collection.putBatch([
+    collection.save([
         {id: 1, foo: 'bar'},
         {id: 2}
       ])
       .then(function () {
         return collection.fetchRemoteIds();
-      })
-      .then(function (response) {
-        expect(response).to.have.length(3);
-        return collection.getBatch(response);
       })
       .then(function (response) {
         expect(response).to.have.length(3);
@@ -311,27 +300,25 @@ describe('Backbone.DualCollection', function () {
     collection.url = '/test';
     collection.name = 'nested';
 
-    collection.putBatch([
+    collection.save([
       {id: 1, updated_at: '2016-01-04T13:15:04Z', foo: 'bar'},
       {id: 2, updated_at: '2016-01-11T13:15:04Z'},
       {id: 3, updated_at: '2015-01-04T13:15:04Z'}
-    ]).then(function (response) {
-        expect(response).to.have.length(3);
-        return collection.fetchUpdatedIds();
-      })
-      .then(function (response) {
-        expect(response).to.have.length(2);
-        return collection.getBatch();
-      })
-      .then(function (response) {
-        expect(response).to.have.length(4);
+    ])
+    .then(function (response) {
+      expect(response).to.have.length(3);
+      return collection.fetchUpdatedIds();
+    })
+    .then(function (response) {
+      expect(response).to.have.length(2);
+      expect(collection).to.have.length(3);
 
-        var read = collection.states.read;
-        expect(_.map(response, '_state')).eqls([undefined, read, undefined, read]);
+      var read = collection.states.read;
+      expect(_.map(response, '_state')).eqls([read, read]);
 
-        done();
-      })
-      .catch(done);
+      done();
+    })
+    .catch(done);
 
   });
 
@@ -367,11 +354,11 @@ describe('Backbone.DualCollection', function () {
     collection.url = '/test';
     collection.name = 'nested';
 
-    collection.putBatch([
+    collection.save([
       {id: 1, foo: 'bar'},
       {id: 2, foo: 'baz', _state: 'READ_FAILED'},
       {id: 3, foo: 'boo', _state: 'READ_FAILED'}
-    ])
+    ], { set: false })
     .then(function (response) {
       expect(response).to.have.length(3);
       collection.fetch({
@@ -398,22 +385,23 @@ describe('Backbone.DualCollection', function () {
 
     var collection = new Backbone.DualCollection();
 
-    collection.putBatch([
-        {id: 1, foo: 'bar'},
-        {id: 2, foo: 'baz'},
-        {id: 3, foo: 'boo'}
-      ])
-      .then(function (response) {
-        expect(response).to.have.length(3);
-        collection.fetch({
-          special: true,
-          success: function(collection, response, options){
-            expect(_.get(options, ['idb', 'total'])).eqls(3);
-            done();
-          }
-        });
-      })
-      .catch(done);
+    collection.save([
+      {id: 1, foo: 'bar'},
+      {id: 2, foo: 'baz'},
+      {id: 3, foo: 'boo'}
+    ], { set: false })
+    .then(function (response) {
+      expect(response).to.have.length(3);
+      collection.fetch({
+        special: true,
+        error: done,
+        success: function(collection, response, options){
+          expect(_.get(options, ['idb', 'total'])).eqls(3);
+          done();
+        }
+      });
+    })
+    .catch(done);
   });
 
   //
@@ -459,7 +447,7 @@ describe('Backbone.DualCollection', function () {
   afterEach(function (done) {
     this.server.restore();
     var collection = new Backbone.DualCollection();
-    collection.clear().then(done);
+    collection.destroy().then(done);
   });
 
   /**
