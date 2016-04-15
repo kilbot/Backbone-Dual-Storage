@@ -144,7 +144,6 @@
 
 	  // delayed states
 	  states: {
-	    //'patch'  : 'UPDATE_FAILED',
 	    'update': 'UPDATE_FAILED',
 	    'create': 'CREATE_FAILED',
 	    'delete': 'DELETE_FAILED',
@@ -255,7 +254,7 @@
 	    options = options || {};
 	    var self = this, url = _.result(this, 'url') + '/ids';
 
-	    var opts = _.defaults(options, {
+	    _.extend(options, {
 	      url   : url,
 	      data  : {
 	        fields: 'id',
@@ -273,11 +272,11 @@
 	          }
 	          return local;
 	        }
-	      }
+	      },
+	      success: undefined
 	    });
 
-	    opts.success = undefined;
-	    return this.fetchRemote(opts);
+	    return this.fetchRemote(options);
 	  },
 
 	  /**
@@ -969,7 +968,6 @@
 /* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var bb = __webpack_require__(1);
 	var _ = __webpack_require__(3);
 	var IDBModel = __webpack_require__(10);
 
@@ -989,94 +987,60 @@
 	    return urlRoot;
 	  },
 
-	  fetch: function (options) {
+	  /* jshint -W071, -W074, -W116 */
+	  save: function(key, val, options){
+	    var attrs;
+	    if (key == null || typeof key === 'object') {
+	      attrs = key;
+	      options = val;
+	    } else {
+	      (attrs = {})[key] = val;
+	    }
+
+	    options = options || {};
+	    var method = this.hasRemoteId() ? 'update' : 'create';
+	    this.set({ _state: this.collection.states[method] }, { silent: true });
+
+	    if(!options.remote){
+	      return IDBModel.prototype.save.apply(this, arguments);
+	    }
+
+	    var model = this, success = options.success, local_id;
+	    _.extend(options, { success: undefined, remote: false });
+	    if (options.patch && !options.attrs) {
+	      options.attrs = this.prepareRemoteJSON(attrs);
+	    }
+
+	    return this.sync(method, this, options)
+	      .then(function(resp){
+	        local_id = resp.local_id;
+	        _.extend(options, { remote: true });
+	        return model.sync(method, model, options);
+	      })
+	      .then(function(resp){
+	        resp = model.parse(resp, options);
+	        _.extend(resp, { local_id: local_id, _state: undefined });
+	        _.extend(options, { remote: false, success: success });
+	        return IDBModel.prototype.save.call(model, resp, options);
+	      });
+	  },
+	  /* jshint +W071, +W074, +W116 */
+
+	  fetch: function(options){
 	    options = _.extend({parse: true}, options);
-	    var self = this, success = options.success;
-	    var _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
 
-	    if (success) {
-	      options.success = undefined;
+	    if(!options.remote){
+	      return IDBModel.prototype.fetch.call(this, options);
 	    }
 
-	    return _fetch.call(this, options)
-	      .then(function (response) {
-	        self.set(response, options);
-	        if (success) {
-	          success.call(options.context, self, response, options);
-	        }
-	        self.trigger('sync', self, response, options);
-	        return response;
-	      });
-	  },
+	    var model = this;
 
-	  fetchLocal: function (options) {
-	    var self = this, isNew = this.isNew();
 	    return this.sync('read', this, options)
-	      .then(function (response) {
-	        // if(!response) {
-	        //   options.remote = true;
-	        //   return self.sync('read', this, options);
-	        // }
-	        return response;
-	      })
-	      .then(function (response) {
-	        if (isNew) {
-	          self.collection.fullSync();
-	        }
-	        return response;
-	      });
-	  },
-
-	  fetchRemote: function (options) {
-	    options = options || {};
-	    options.remote = true;
-	    return this.sync('read', this, options);
-	  },
-
-	  sync: function (method, model, options) {
-	    options = options || {};
-	    if (method !== 'read') {
-	      this.setLocalState(method);
-	    }
-	    if (options.remote) {
-	      return this.remoteSync(method, model, options);
-	    }
-	    return bb.sync.call(this, method, model, options);
-	  },
-
-	  remoteSync: function (method, model, options) {
-	    var self = this, opts = _.extend({}, options, {
-	      remote : false,
-	      success: false
-	    });
-	    return bb.sync.call(this, method, model, opts)
-	      .then(function () {
-	        var remoteMethod = self.getRemoteMethod();
-	        opts.remote = true;
-	        return bb.sync.call(self, remoteMethod, model, opts);
-	      })
 	      .then(function (resp) {
-	        resp = options.parse ? model.parse(resp, options) : resp;
-	        model.set(resp);
-	        opts.remote = false;
-	        opts.success = options.success;
-	        return bb.sync.call(self, 'update', model, opts);
+	        resp = model.parse(resp, options);
+	        _.extend(options, { remote: false });
+	        return IDBModel.prototype.save.call(model, resp, options);
 	      });
-	  },
-
-	  setLocalState: function (method) {
-	    method = method === 'patch' ? 'update' : method;
-	    if (method === 'update' && !this.hasRemoteId()) {
-	      method = 'create';
-	    }
-	    if (method === 'create' && this.hasRemoteId()) {
-	      method = 'update';
-	    }
-	    this.set({_state: this.collection.states[method]});
-	  },
-
-	  getRemoteMethod: function () {
-	    return _.invert(this.collection.states)[this.get('_state')];
 	  },
 
 	  hasRemoteId: function () {
@@ -1093,7 +1057,9 @@
 	  },
 
 	  prepareRemoteJSON: function (json) {
-	    json._state = undefined;
+	    if(_.has(json, '_state')){
+	      delete json._state;
+	    }
 	    var nested = {};
 	    nested[this.name] = json;
 	    return nested;
@@ -1103,7 +1069,6 @@
 	    options = options || {};
 	    if (options.remote) {
 	      resp = resp && resp[this.name] ? resp[this.name] : resp;
-	      resp._state = undefined;
 	    }
 	    return IDBModel.prototype.parse.call(this, resp, options);
 	  }

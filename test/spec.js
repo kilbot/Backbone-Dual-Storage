@@ -404,6 +404,51 @@ describe('Backbone.DualCollection', function () {
     .catch(done);
   });
 
+  it('should patch a model to the remote server', function(done){
+
+    // mock server response
+    var response = JSON.stringify({ nest: { id: 1, foo: 'baz', boo: 'bat' } });
+    var server = this.server;
+    server.respondWith('PUT', '/test/1/', [200, {"Content-Type": "application/json"},
+      response
+    ]);
+
+    var Model = Backbone.DualModel.extend({
+      name: 'nest'
+    });
+
+    //
+    var collection = new Backbone.DualCollection();
+    collection.url = '/test';
+    collection.model = Model;
+
+    collection.create({id: 1, foo: 'bar', boo: 'bat'}, {
+      wait: true,
+      error: done,
+      success: function(model, response, options){
+        model.save({ foo: 'baz' }, {
+          remote: true,
+          patch: true,
+          special: true,
+          error: done,
+          success: function(model, response, options){
+            var request = server.requests[0];
+            var postData = JSON.parse(request.requestBody);
+            expect(postData).eqls({ nest: {foo: 'baz'} });
+
+            expect(model.get('foo')).eqls('baz');
+            expect(model.get('_state')).to.be.undefined;
+            expect(options.special).to.be.true;
+
+            done();
+          }
+        })
+        .catch(done);
+      }
+    });
+
+  });
+
   //
   //it('should remove garbage', function( done ){
   //

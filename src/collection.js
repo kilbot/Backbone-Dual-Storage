@@ -16,7 +16,6 @@ module.exports = IDBCollection.extend({
 
   // delayed states
   states: {
-    //'patch'  : 'UPDATE_FAILED',
     'update': 'UPDATE_FAILED',
     'create': 'CREATE_FAILED',
     'delete': 'DELETE_FAILED',
@@ -127,7 +126,7 @@ module.exports = IDBCollection.extend({
     options = options || {};
     var self = this, url = _.result(this, 'url') + '/ids';
 
-    var opts = _.defaults(options, {
+    _.extend(options, {
       url   : url,
       data  : {
         fields: 'id',
@@ -145,11 +144,11 @@ module.exports = IDBCollection.extend({
           }
           return local;
         }
-      }
+      },
+      success: undefined
     });
 
-    opts.success = undefined;
-    return this.fetchRemote(opts);
+    return this.fetchRemote(options);
   },
 
   /**
