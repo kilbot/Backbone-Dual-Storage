@@ -1,4 +1,14 @@
-describe('Backbone.DualCollection', function () {
+describe('Dual Collections', function () {
+
+  var DualModel = app.Model.extend({
+    extends: ['dual'],
+    special: true
+  });
+
+  var DualCollection = app.Collection.extend({
+    extends: ['dual'],
+    model: DualModel
+  });
 
   beforeEach(function () {
     this.server = sinon.fakeServer.create();
@@ -7,12 +17,19 @@ describe('Backbone.DualCollection', function () {
   });
 
   it('should be in a valid state', function () {
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     expect(collection).to.be.ok;
   });
 
+  it('should decorate the model', function(){
+    var collection = new DualCollection();
+    var model = collection.add({});
+    expect(model.special).to.be.true;
+    expect(model.sync).eqls(collection.sync);
+  });
+
   it('should create to local IndexedDB', function (done) {
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
 
     collection.create({foo: 'bar'}, {
       wait   : true,
@@ -31,7 +48,7 @@ describe('Backbone.DualCollection', function () {
   });
 
   it('should update to local IndexedDB', function (done) {
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
 
     collection.create({foo: 'bar'}, {
       //wait: true,
@@ -60,7 +77,7 @@ describe('Backbone.DualCollection', function () {
       response
     ]);
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
 
     collection.create({foo: 'bar'}, {
@@ -77,8 +94,8 @@ describe('Backbone.DualCollection', function () {
         expect(options.special).to.be.true;
 
         collection.db.count(function (count) {
-            expect(count).equals(1);
-          })
+          expect(count).equals(1);
+        })
           .then(function () {
             return collection.db.get(model.id);
           })
@@ -99,7 +116,7 @@ describe('Backbone.DualCollection', function () {
       response
     ]);
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
 
     collection.create({id: 2, foo: 'bar'}, {
@@ -122,8 +139,8 @@ describe('Backbone.DualCollection', function () {
             expect(options.special).to.be.true;
 
             collection.db.count(function (count) {
-                expect(count).equals(1);
-              })
+              expect(count).equals(1);
+            })
               .then(function () {
                 return collection.db.get(model.id);
               })
@@ -148,7 +165,7 @@ describe('Backbone.DualCollection', function () {
       response
     ]);
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
 
     var model = collection.add({foo: 'bar'});
@@ -190,15 +207,15 @@ describe('Backbone.DualCollection', function () {
       response
     ]);
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
     collection.name = 'nested';
 
     collection.save([
-        {id: 1, foo: 'bar'},
-        {id: 2, foo: 'baz'},
-        {id: 3, foo: 'boo'}
-      ])
+      {id: 1, foo: 'bar'},
+      {id: 2, foo: 'baz'},
+      {id: 3, foo: 'boo'}
+    ])
       .then(function () {
         expect(collection).to.have.length(3);
         return collection.fetch({
@@ -228,7 +245,7 @@ describe('Backbone.DualCollection', function () {
       response
     ]);
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
     collection.name = 'nested';
 
@@ -257,14 +274,14 @@ describe('Backbone.DualCollection', function () {
       response
     ]);
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
     collection.name = 'nested';
 
     collection.save([
-        {id: 1, foo: 'bar'},
-        {id: 2}
-      ])
+      {id: 1, foo: 'bar'},
+      {id: 2}
+    ])
       .then(function () {
         return collection.fetchRemoteIds();
       })
@@ -296,7 +313,7 @@ describe('Backbone.DualCollection', function () {
       response
     ]);
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
     collection.name = 'nested';
 
@@ -305,20 +322,20 @@ describe('Backbone.DualCollection', function () {
       {id: 2, updated_at: '2016-01-11T13:15:04Z'},
       {id: 3, updated_at: '2015-01-04T13:15:04Z'}
     ])
-    .then(function (response) {
-      expect(response).to.have.length(3);
-      return collection.fetchUpdatedIds();
-    })
-    .then(function (response) {
-      expect(response).to.have.length(2);
-      expect(collection).to.have.length(3);
+      .then(function (response) {
+        expect(response).to.have.length(3);
+        return collection.fetchUpdatedIds();
+      })
+      .then(function (response) {
+        expect(response).to.have.length(2);
+        expect(collection).to.have.length(3);
 
-      var read = collection.states.read;
-      expect(_.map(response, '_state')).eqls([read, read]);
+        var read = collection.states.read;
+        expect(_.map(response, '_state')).eqls([read, read]);
 
-      done();
-    })
-    .catch(done);
+        done();
+      })
+      .catch(done);
 
   });
 
@@ -350,7 +367,7 @@ describe('Backbone.DualCollection', function () {
       return result;
     };
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
     collection.name = 'nested';
 
@@ -359,49 +376,49 @@ describe('Backbone.DualCollection', function () {
       {id: 2, foo: 'baz', _state: 'READ_FAILED'},
       {id: 3, foo: 'boo', _state: 'READ_FAILED'}
     ], { set: false })
-    .then(function (response) {
-      expect(response).to.have.length(3);
-      collection.fetch({
-        special: true,
-        success: function(collection, response, options){
-          var query = parse( server.requests[0].url );
-          expect(query['filter[in]']).eqls('2,3');
+      .then(function (response) {
+        expect(response).to.have.length(3);
+        collection.fetch({
+          special: true,
+          success: function(collection, response, options){
+            var query = parse( server.requests[0].url );
+            expect(query['filter[in]']).eqls('2,3');
 
-          expect(response).to.have.length(3);
-          expect(collection).to.have.length(3);
-          expect(collection.map('foo')).eqls(['bar', 'bam', 'bap']);
-          expect(collection.map('_state')).eqls([undefined, undefined, undefined]);
-          expect(options.special).to.be.true;
+            expect(response).to.have.length(3);
+            expect(collection).to.have.length(3);
+            expect(collection.map('foo')).eqls(['bar', 'bam', 'bap']);
+            expect(collection.map('_state')).eqls([undefined, undefined, undefined]);
+            expect(options.special).to.be.true;
 
-          done();
-        }
-      });
-    })
-    .catch(done);
+            done();
+          }
+        });
+      })
+      .catch(done);
 
   });
 
   it('should return the total number of records for local fetch', function(done){
 
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
 
     collection.save([
       {id: 1, foo: 'bar'},
       {id: 2, foo: 'baz'},
       {id: 3, foo: 'boo'}
     ], { set: false })
-    .then(function (response) {
-      expect(response).to.have.length(3);
-      collection.fetch({
-        special: true,
-        error: done,
-        success: function(collection, response, options){
-          expect(_.get(options, ['idb', 'total'])).eqls(3);
-          done();
-        }
-      });
-    })
-    .catch(done);
+      .then(function (response) {
+        expect(response).to.have.length(3);
+        collection.fetch({
+          special: true,
+          error: done,
+          success: function(collection, response, options){
+            expect(_.get(options, ['idb', 'total'])).eqls(3);
+            done();
+          }
+        });
+      })
+      .catch(done);
   });
 
   it('should patch a model to the remote server', function(done){
@@ -413,12 +430,12 @@ describe('Backbone.DualCollection', function () {
       response
     ]);
 
-    var Model = Backbone.DualModel.extend({
+    var Model = DualModel.extend({
       name: 'nest'
     });
 
     //
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.url = '/test';
     collection.model = Model;
 
@@ -443,7 +460,7 @@ describe('Backbone.DualCollection', function () {
             done();
           }
         })
-        .catch(done);
+          .catch(done);
       }
     });
 
@@ -458,7 +475,7 @@ describe('Backbone.DualCollection', function () {
   //    response
   //  ]);
   //
-  //  var collection = new Backbone.DualCollection();
+  //  var collection = new DualCollection();
   //  collection.url = '/test';
   //  collection.name = 'nested';
   //
@@ -491,7 +508,7 @@ describe('Backbone.DualCollection', function () {
    */
   afterEach(function (done) {
     this.server.restore();
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     collection.destroy().then(done);
   });
 
@@ -499,7 +516,7 @@ describe('Backbone.DualCollection', function () {
    * Delete test database
    */
   after(function () {
-    var collection = new Backbone.DualCollection();
+    var collection = new DualCollection();
     window.indexedDB.deleteDatabase(collection.db.opts.dbName);
   });
 

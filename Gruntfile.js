@@ -45,7 +45,8 @@ module.exports = function(grunt) {
       build: {
         output: {
           path: './dist',
-          filename: '[name].js'
+          filename: '[name].js',
+          library: 'app'
         }
       }
     },

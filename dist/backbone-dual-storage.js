@@ -1,3 +1,4 @@
+var app =
 /******/ (function(modules) { // webpackBootstrap
 /******/ 	// The module cache
 /******/ 	var installedModules = {};
@@ -44,11 +45,45 @@
 /* 0 */
 /***/ function(module, exports, __webpack_require__) {
 
+	/**
+	 * extend Backbone Collection for app use
+	 */
 	var bb = __webpack_require__(1);
-	bb.sync = __webpack_require__(2);
+	var extend = __webpack_require__(2);
 
-	bb.DualCollection = __webpack_require__(5);
-	bb.DualModel = __webpack_require__(11);
+	var Collection = bb.Collection.extend({
+	  decorators :{
+	    dual: __webpack_require__(4),
+	    idb: __webpack_require__(7)
+	  },
+	  constructor: function () {
+	    bb.Collection.apply(this, arguments);
+	    this.isNew(true);
+	  },
+	  isNew: function(reset) {
+	    if(reset){
+	      this._isNew = true;
+	      this.once('sync', function() {
+	        this._isNew = false;
+	      });
+	    }
+	    return this._isNew;
+	  }
+	});
+
+	var Model = bb.Model.extend({
+	  decorators :{
+	    dual: __webpack_require__(11),
+	    idb: __webpack_require__(12)
+	  }
+	});
+
+	Collection.extend = Model.extend = extend;
+
+	module.exports = {
+	  Collection  : Collection,
+	  Model       : Model
+	};
 
 /***/ },
 /* 1 */
@@ -60,17 +95,46 @@
 /* 2 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var bb = __webpack_require__(1);
 	var _ = __webpack_require__(3);
-	var ajaxSync = bb.sync;
-	var idbSync = __webpack_require__(4);
 
-	module.exports = function(method, entity, options) {
-	  var idb = _.get(entity, ['collection', 'db'], entity.db);
-	  if(!options.remote && idb) {
-	    return idbSync.apply(this, arguments);
+	module.exports = function(protoProps, staticProps){
+	  var parent = this;
+	  var child;
+	  var extend;
+	  var decorators = _.get(parent, ['prototype', 'decorators']);
+
+	  if (!_.isEmpty(decorators) && protoProps && _.has(protoProps, 'extends')) {
+	    extend = _.isString(protoProps.extends) ? [protoProps.extends] : protoProps.extends;
 	  }
-	  return ajaxSync.apply(this, arguments);
+
+	  // russian doll decorators
+	  if(extend && _.isArray(extend)){
+	    _.each(extend, function(key){
+	      if(!_.includes(parent._extended, key)){
+	        parent = _.has(decorators, key) ? decorators[key](parent) : parent;
+	        _.isArray(parent._extended) ? parent._extended.push(key) : parent._extended = [key];
+	      }
+	    });
+	  }
+
+	  if (protoProps && _.has(protoProps, 'constructor')) {
+	    child = protoProps.constructor;
+	  } else {
+	    child = function(){ return parent.apply(this, arguments); };
+	  }
+
+	  // Add static properties to the constructor function, if supplied.
+	  _.extend(child, parent, staticProps);
+
+	  // Set the prototype chain to inherit from `parent`, without calling
+	  // `parent`'s constructor function and add the prototype properties.
+	  child.prototype = _.create(parent.prototype, protoProps);
+	  child.prototype.constructor = child;
+
+	  // Set a convenience property in case the parent's prototype is needed
+	  // later.
+	  child.__super__ = parent.prototype;
+	  return child;
 	};
 
 /***/ },
@@ -81,6 +145,231 @@
 
 /***/ },
 /* 4 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var _ = __webpack_require__(3);
+	var sync = __webpack_require__(5);
+
+	module.exports = function (parent){
+
+	  /**
+	   * ensure IDBCollection first
+	   */
+	  var decorators = _.get(parent, ['prototype', 'decorators']);
+	  if(!_.includes(parent._extended, 'idb')){
+	    parent = _.has(decorators, 'idb') ? decorators['idb'](parent) : parent;
+	    _.isArray(parent._extended) ? parent._extended.push('idb') : parent._extended = ['idb'];
+	  }
+
+	  var DualCollection = parent.extend({
+	    sync: sync,
+
+	    keyPath: 'local_id',
+
+	    indexes: [
+	      {name: 'id', keyPath: 'id', unique: true},
+	      {name: 'updated_at', keyPath: 'updated_at'},
+	      {name: '_state', keyPath: '_state'}
+	    ],
+
+	    // delayed states
+	    states: {
+	      'update': 'UPDATE_FAILED',
+	      'create': 'CREATE_FAILED',
+	      'delete': 'DELETE_FAILED',
+	      'read'  : 'READ_FAILED'
+	    },
+
+	    toJSON: function (options) {
+	      options = options || {};
+	      var json = parent.prototype.toJSON.apply(this, arguments);
+	      if (options.remote && this.name) {
+	        var nested = {};
+	        nested[this.name] = json;
+	        return nested;
+	      }
+	      return json;
+	    },
+
+	    parse: function (resp, options) {
+	      options = options || {};
+	      if (options.remote) {
+	        resp = resp && resp[this.name] ? resp[this.name] : resp;
+	      }
+	      return parent.prototype.parse.call(this, resp, options);
+	    },
+
+	    /* jshint -W071, -W074 */
+	    fetch: function (options) {
+	      options = _.extend({parse: true}, options);
+	      var collection = this, success = options.success;
+	      var _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
+	      options.success = undefined;
+
+	      if(this.pageSize){
+	        var limit = _.get(options, ['data', 'filter', 'limit']);
+	        if(!limit) { _.set(options, 'data.filter.limit', this.pageSize); }
+	      }
+
+	      return _fetch.call(this, options)
+	        .then(function (response) {
+	          var method = options.reset ? 'reset' : 'set';
+	          collection._parseFetchOptions(options);
+	          collection[method](response, options);
+	          if (success) {
+	            success.call(options.context, collection, response, options);
+	          }
+	          collection.trigger('sync', collection, response, options);
+	          return response;
+	        });
+	    },
+	    /* jshint +W071, +W074 */
+
+	    /**
+	     *
+	     */
+	    fetchLocal: function (options) {
+	      var collection = this, isNew = this.isNew();
+	      _.extend(options, {set: false});
+
+	      return this.sync('read', this, options)
+	        .then(function (response) {
+	          if(options.remote === false) { return response; }
+	          if(isNew && _.size(response) === 0) { return collection.fetchRemote(options); }
+	          return collection.fetchReadDelayed(response);
+	        })
+	        .then(function(response){
+	          if(isNew && options.fullSync !== false) { collection.fullSync(); }
+	          return response;
+	        });
+	    },
+
+	    /**
+	     * Get remote data and merge with local data on id
+	     * returns merged data
+	     */
+	    fetchRemote: function (options) {
+	      var collection = this;
+	      _.extend(options, { remote: true, set: false });
+
+	      return this.sync('read', this, options)
+	        .then(function (response) {
+	          response = collection.parse(response, options);
+	          options.index = options.index || 'id';
+	          _.extend(options, { remote: false });
+	          return collection.save(response, options);
+	        });
+	    },
+
+	    /**
+	     *
+	     */
+	    fetchRemoteIds: function (last_update, options) {
+	      options = options || {};
+	      var self = this, url = _.result(this, 'url') + '/ids';
+
+	      _.extend(options, {
+	        url   : url,
+	        data  : {
+	          fields: 'id',
+	          filter: {
+	            limit         : -1,
+	            updated_at_min: last_update
+	          }
+	        },
+	        index: {
+	          keyPath: 'id',
+	          merge  : function (local, remote) {
+	            if(!local || local.updated_at < remote.updated_at){
+	              local = local || remote;
+	              local._state = self.states.read;
+	            }
+	            return local;
+	          }
+	        },
+	        success: undefined
+	      });
+
+	      return this.fetchRemote(options);
+	    },
+
+	    /**
+	     *
+	     */
+	    fetchUpdatedIds: function (options) {
+	      var collection = this;
+	      return this.fetchLocal({
+	        index    : 'updated_at',
+	        data     : { filter: { limit: 1, order: 'DESC' } },
+	        fullSync : false
+	      })
+	        .then(function (response) {
+	          var last_update = _.get(response, [0, 'updated_at']);
+	          return collection.fetchRemoteIds(last_update, options);
+	        });
+	    },
+
+	    fullSync: function(options){
+	      return this.fetchRemoteIds(options);
+	    },
+
+	    fetchReadDelayed: function(response){
+	      var delayed = this.getDelayed('read', response);
+	      if(!_.isEmpty(delayed)){
+	        var ids = _.map(delayed, 'id');
+	        return this.fetchRemote({ data: { filter: { 'in': ids.join(',') } } })
+	          .then(function(resp){
+	            _.each(resp, function(attrs){
+	              var key = _.findKey(response, {id: attrs.id});
+	              if(key){ response[key] = attrs; } else { response.push(resp); }
+	            });
+	            return response;
+	          });
+	      }
+	      return response;
+	    },
+
+	    getDelayed: function(state, collection){
+	      var _state = this.states[state];
+	      collection = collection || this;
+	      return _.filter(collection, {_state: _state});
+	    },
+
+	    _parseFetchOptions: function(options){
+	      if(options.idb){
+	        this._total = options.idb.total;
+	        this._delayed = options.idb.delayed;
+	      }
+	      if(options.xhr){
+	        this._total = options.xhr.getResponseHeader('X-WC-Total');
+	        this._delayed = 0;
+	      }
+	    }
+
+	  });
+
+	  return DualCollection;
+	};
+
+/***/ },
+/* 5 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var bb = __webpack_require__(1);
+	var _ = __webpack_require__(3);
+	var ajaxSync = bb.sync;
+	var idbSync = __webpack_require__(6);
+
+	module.exports = function(method, entity, options) {
+	  var idb = _.get(entity, ['collection', 'db'], entity.db);
+	  if(!options.remote && idb) {
+	    return idbSync.apply(this, arguments);
+	  }
+	  return ajaxSync.apply(this, arguments);
+	};
+
+/***/ },
+/* 6 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var bb = __webpack_require__(1);
@@ -104,6 +393,7 @@
 	      switch (method) {
 	        case 'create':
 	        case 'update':
+	        case 'patch':
 	          return db.update(data, options);
 	        case 'read':
 	          return db.read(key, options);
@@ -123,321 +413,141 @@
 	/* jshint +W074 */
 
 /***/ },
-/* 5 */
+/* 7 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var _ = __webpack_require__(3);
-	var IDBCollection = __webpack_require__(6);
-	var DualModel = __webpack_require__(11);
-
-	module.exports = IDBCollection.extend({
-
-	  model: DualModel,
-
-	  keyPath: 'local_id',
-
-	  indexes: [
-	    {name: 'id', keyPath: 'id', unique: true},
-	    {name: 'updated_at', keyPath: 'updated_at'},
-	    {name: '_state', keyPath: '_state'}
-	  ],
-
-	  // delayed states
-	  states: {
-	    'update': 'UPDATE_FAILED',
-	    'create': 'CREATE_FAILED',
-	    'delete': 'DELETE_FAILED',
-	    'read'  : 'READ_FAILED'
-	  },
-
-	  constructor: function() {
-	    IDBCollection.apply(this, arguments);
-	    this.resetNew();
-	  },
-
-	  resetNew: function(){
-	    this._isNew = true;
-	    this.once('sync', function() {
-	      this._isNew = false;
-	    });
-	  },
-
-	  isNew: function() {
-	    return this._isNew;
-	  },
-
-	  toJSON: function (options) {
-	    options = options || {};
-	    var json = IDBCollection.prototype.toJSON.apply(this, arguments);
-	    if (options.remote && this.name) {
-	      var nested = {};
-	      nested[this.name] = json;
-	      return nested;
-	    }
-	    return json;
-	  },
-
-	  parse: function (resp, options) {
-	    options = options || {};
-	    if (options.remote) {
-	      resp = resp && resp[this.name] ? resp[this.name] : resp;
-	    }
-	    return IDBCollection.prototype.parse.call(this, resp, options);
-	  },
-
-	  /* jshint -W071, -W074 */
-	  fetch: function (options) {
-	    options = _.extend({parse: true}, options);
-	    var collection = this, success = options.success;
-	    var _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
-	    options.success = undefined;
-
-	    if(this.pageSize){
-	      var limit = _.get(options, ['data', 'filter', 'limit']);
-	      if(!limit) { _.set(options, 'data.filter.limit', this.pageSize); }
-	    }
-
-	    return _fetch.call(this, options)
-	      .then(function (response) {
-	        var method = options.reset ? 'reset' : 'set';
-	        collection._parseFetchOptions(options);
-	        collection[method](response, options);
-	        if (success) {
-	          success.call(options.context, collection, response, options);
-	        }
-	        collection.trigger('sync', collection, response, options);
-	        return response;
-	      });
-	  },
-	  /* jshint +W071, +W074 */
-
-	  /**
-	   *
-	   */
-	  fetchLocal: function (options) {
-	    var collection = this, isNew = this.isNew();
-	    _.extend(options, {set: false});
-
-	    return this.sync('read', this, options)
-	      .then(function (response) {
-	        if(options.remote === false) { return response; }
-	        if(isNew && _.size(response) === 0) { return collection.fetchRemote(options); }
-	        return collection.fetchReadDelayed(response);
-	      })
-	      .then(function(response){
-	        if(isNew && options.fullSync !== false) { collection.fullSync(); }
-	        return response;
-	      });
-	  },
-
-	  /**
-	   * Get remote data and merge with local data on id
-	   * returns merged data
-	   */
-	  fetchRemote: function (options) {
-	    var collection = this;
-	    _.extend(options, { remote: true, set: false });
-
-	    return this.sync('read', this, options)
-	      .then(function (response) {
-	        response = collection.parse(response, options);
-	        options.index = options.index || 'id';
-	        _.extend(options, { remote: false });
-	        return collection.save(response, options);
-	      });
-	  },
-
-	  /**
-	   *
-	   */
-	  fetchRemoteIds: function (last_update, options) {
-	    options = options || {};
-	    var self = this, url = _.result(this, 'url') + '/ids';
-
-	    _.extend(options, {
-	      url   : url,
-	      data  : {
-	        fields: 'id',
-	        filter: {
-	          limit         : -1,
-	          updated_at_min: last_update
-	        }
-	      },
-	      index: {
-	        keyPath: 'id',
-	        merge  : function (local, remote) {
-	          if(!local || local.updated_at < remote.updated_at){
-	            local = local || remote;
-	            local._state = self.states.read;
-	          }
-	          return local;
-	        }
-	      },
-	      success: undefined
-	    });
-
-	    return this.fetchRemote(options);
-	  },
-
-	  /**
-	   *
-	   */
-	  fetchUpdatedIds: function (options) {
-	    var collection = this;
-	    return this.fetchLocal({
-	      index    : 'updated_at',
-	      data     : { filter: { limit: 1, order: 'DESC' } },
-	      fullSync : false
-	    })
-	    .then(function (response) {
-	      var last_update = _.get(response, [0, 'updated_at']);
-	      return collection.fetchRemoteIds(last_update, options);
-	    });
-	  },
-
-	  fullSync: function(options){
-	    return this.fetchRemoteIds(options);
-	  },
-
-	  fetchReadDelayed: function(response){
-	    var delayed = this.getDelayed('read', response);
-	    if(!_.isEmpty(delayed)){
-	      var ids = _.map(delayed, 'id');
-	      return this.fetchRemote({ data: { filter: { 'in': ids.join(',') } } })
-	        .then(function(resp){
-	          _.each(resp, function(attrs){
-	            var key = _.findKey(response, {id: attrs.id});
-	            if(key){ response[key] = attrs; } else { response.push(resp); }
-	          });
-	          return response;
-	        });
-	    }
-	    return response;
-	  },
-
-	  getDelayed: function(state, collection){
-	    var _state = this.states[state];
-	    collection = collection || this;
-	    return _.filter(collection, {_state: _state});
-	  },
-
-	  _parseFetchOptions: function(options){
-	    if(options.idb){
-	      this._total = options.idb.total;
-	      this._delayed = options.idb.delayed;
-	    }
-	    if(options.xhr){
-	      this._total = options.xhr.getResponseHeader('X-WC-Total');
-	      this._delayed = 0;
-	    }
-	  }
-
-	});
-
-/***/ },
-/* 6 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var IDBAdapter = __webpack_require__(7);
-	var IDBModel = __webpack_require__(10);
-	var _ = __webpack_require__(3);
 	var bb = __webpack_require__(1);
+	var _ = __webpack_require__(3);
+	var IDBAdapter = __webpack_require__(8);
+	var sync = __webpack_require__(6);
 
-	module.exports = bb.Collection.extend({
-	  
-	  model: IDBModel,
+	module.exports = function (parent){
 
-	  constructor: function () {
-	    this.db = new IDBAdapter({ collection: this });
-	    bb.Collection.apply(this, arguments);
-	  },
+	  var IDBCollection = parent.extend({
 
-	  /**
-	   *
-	   */
-	  /* jshint -W071, -W074 */
-	  save: function(models, options){
-	    options = options || {};
-	    var collection = this,
+	    constructor: function(){
+	      parent.apply(this, arguments);
+	      this.db = new IDBAdapter({ collection: this });
+	    },
+
+	    sync: sync,
+
+	    /**
+	     *
+	     */
+	    /* jshint -W071, -W074 */
+	    save: function(models, options){
+	      options = options || {};
+	      var collection = this,
 	        wait = options.wait,
 	        success = options.success,
 	        setAttrs = options.set !== false;
 
-	    if(models === null){
-	      models = this.getChangedModels();
-	    }
+	      if(models === null){
+	        models = this.getChangedModels();
+	      }
 
-	    var attrsArray = _.map(models, function(model){
-	      return model instanceof bb.Model ? model.toJSON() : model;
-	    });
+	      var attrsArray = _.map(models, function(model){
+	        return model instanceof bb.Model ? model.toJSON() : model;
+	      });
 
-	    if(!wait && setAttrs){
-	      this.set(attrsArray, options);
-	    }
+	      if(!wait && setAttrs){
+	        this.set(attrsArray, options);
+	      }
 
-	    options.success = function(resp) {
-	      var serverAttrs = options.parse ? collection.parse(resp, options) : resp;
-	      if (serverAttrs && setAttrs) { collection.set(serverAttrs, options); }
-	      if (success) { success.call(options.context, collection, resp, options); }
-	      collection.trigger('sync', collection, resp, options);
-	    };
+	      options.success = function(resp) {
+	        var serverAttrs = options.parse ? collection.parse(resp, options) : resp;
+	        if (serverAttrs && setAttrs) { collection.set(serverAttrs, options); }
+	        if (success) { success.call(options.context, collection, resp, options); }
+	        collection.trigger('sync', collection, resp, options);
+	      };
 
-	    return this.sync('update', this, _.extend(options, {attrsArray: attrsArray}));
-	  },
-	  /* jshint +W071, +W074 */
+	      return this.sync('update', this, _.extend(options, {attrsArray: attrsArray}));
+	    },
 
-	  /**
-	   *
-	   */
-	  destroy: function(options){
-	    options = options || {};
-	    var collection = this,
+	    /**
+	     *
+	     */
+	    destroy: function(models, options){
+	      if(!options && models && !_.isArray(models)){
+	        options = models;
+	      } else {
+	        options = options || {};
+	      }
+
+	      var collection = this,
 	        wait = options.wait,
 	        success = options.success;
-	        
-	    options.success = function(resp) {
-	      if (wait) { collection.reset(); }
-	      if (success) { success.call(options.context, collection, resp, options); }
-	      collection.trigger('sync', collection, resp, options);
-	    };
 
-	    if(!wait) { collection.reset(); }
-	    return this.sync('delete', this, options);
-	  },
-
-	  /**
-	   *
-	   */
-	  count: function () {
-	    var self = this;
-	    return this.db.open()
-	      .then(function () {
-	        return self.db.count();
-	      })
-	      .then(function (count) {
-	        self.trigger('count', count);
-	        return count;
+	      options.attrsArray = _.map(models, function(model){
+	        return model instanceof bb.Model ? model.toJSON() : model;
 	      });
-	  },
 
-	  /**
-	   *
-	   */
-	  getChangedModels: function () {
-	    return this.filter(function (model) {
-	      return model.isNew() || model.hasChanged();
-	    });
-	  }
+	      if(options.data){
+	        wait = true;
+	      }
 
-	});
+	      options.success = function(resp) {
+	        if(wait && _.isEmpty(options.attrsArray) ) {
+	          collection.resetNew();
+	          collection.reset();
+	        }
+	        if(wait && !_.isEmpty(options.attrsArray)) {
+	          collection.remove(options.attrsArray);
+	        }
+	        if (success) { success.call(options.context, collection, resp, options); }
+	        collection.trigger('sync', collection, resp, options);
+	      };
+
+	      if(!wait && _.isEmpty(options.attrsArray) ) {
+	        collection.reset();
+	      }
+
+	      if(!wait && !_.isEmpty(options.attrsArray)) {
+	        collection.remove(options.attrsArray);
+	      }
+
+	      return this.sync('delete', this, options);
+	    },
+	    /* jshint +W071, +W074 */
+
+	    /**
+	     *
+	     */
+	    count: function () {
+	      var self = this;
+	      return this.db.open()
+	        .then(function () {
+	          return self.db.count();
+	        })
+	        .then(function (count) {
+	          self.trigger('count', count);
+	          return count;
+	        });
+	    },
+
+	    /**
+	     *
+	     */
+	    getChangedModels: function () {
+	      return this.filter(function (model) {
+	        return model.isNew() || model.hasChanged();
+	      });
+	    }
+
+	  });
+
+	  return IDBCollection;
+
+	};
 
 /***/ },
-/* 7 */
+/* 8 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* jshint -W071, -W074 */
 	var _ = __webpack_require__(3);
-	var matchMaker = __webpack_require__(8);
+	var matchMaker = __webpack_require__(9);
 
 	var is_safari = window.navigator.userAgent.indexOf('Safari') !== -1 &&
 	  window.navigator.userAgent.indexOf('Chrome') === -1 &&
@@ -661,10 +771,17 @@
 
 	  remove: function (key, options) {
 	    options = options || {};
-	    var self = this, objectStore = options.objectStore || this.getObjectStore(consts.READ_WRITE);
+	    var objectStore = options.objectStore || this.getObjectStore(consts.READ_WRITE),
+	        keyPath     = options.index || this.opts.keyPath,
+	        self        = this;
+
+	    if(_.isObject(key)){
+	      key = key[keyPath];
+	    }
 
 	    return new Promise(function (resolve, reject) {
-	      var request = objectStore.delete(key);
+	      var request = (keyPath === self.opts.keyPath) ?
+	        objectStore.delete(key) : objectStore.index(keyPath).delete(key);
 
 	      request.onsuccess = function (event) {
 	        resolve(event.target.result); // undefined
@@ -675,6 +792,7 @@
 	        err.code = event.target.errorCode;
 	        reject(err);
 	      };
+	      
 	      request.onerror = function (event) {
 	        options._error = {event: event, message: 'delete error', callback: reject};
 	        self.opts.onerror(options);
@@ -727,6 +845,7 @@
 
 	    var objectStore = options.objectStore || this.getObjectStore(consts.READ_ONLY),
 	        include     = _.isArray(keyArray) ? keyArray : _.get(options, ['data', 'filter', 'in']),
+	        exclude     = _.get(options, ['data', 'filter', 'not_in']),
 	        limit       = _.get(options, ['data', 'filter', 'limit'], -1),
 	        start       = _.get(options, ['data', 'filter', 'offset'], 0),
 	        order       = _.get(options, ['data', 'filter', 'order'], 'ASC'),
@@ -763,6 +882,7 @@
 	          }
 	          if (
 	            (!include || _.includes(include, cursor.value[keyPath])) &&
+	            (!exclude || !_.includes(exclude, cursor.value[keyPath])) &&
 	            (!query || self._match(query, cursor.value, keyPath, options))
 	          ) {
 	            records.push(cursor.value);
@@ -782,8 +902,29 @@
 	    });
 	  },
 
-	  removeBatch: function(keyArray, options) {
-	    return this.clear(options);
+	  removeBatch: function(dataArray, options) {
+	    var batch = [];
+	    options = options || {};
+	    dataArray = dataArray || options.attrsArray;
+
+	    if(_.isEmpty(dataArray) && !options.data){
+	      return this.clear(options);
+	    }
+
+	    if(options.data){
+	      var self = this;
+	      return this.getBatch(null, options)
+	        .then(function(response){
+	          options.attrsArray = _.map(response, self.opts.keyPath);
+	          return self.removeBatch(options.attrsArray);
+	        });
+	    }
+
+	    _.each(dataArray, function (data) {
+	      batch.push(this.remove(data, options));
+	    }.bind(this));
+
+	    return Promise.all(batch);
 	  },
 
 	  clear: function (options) {
@@ -816,11 +957,11 @@
 	/* jshint +W071, +W074 */
 
 /***/ },
-/* 8 */
+/* 9 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
-	var match = __webpack_require__(9);
+	var match = __webpack_require__(10);
 
 	var defaults = {
 	  fields: ['title'] // json property to use for simple string search
@@ -901,7 +1042,7 @@
 	};
 
 /***/ },
-/* 9 */
+/* 10 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
@@ -955,125 +1096,147 @@
 	};
 
 /***/ },
-/* 10 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var bb = __webpack_require__(1);
-
-	module.exports = bb.Model.extend({
-
-	});
-
-/***/ },
 /* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
-	var IDBModel = __webpack_require__(10);
+	var sync = __webpack_require__(5);
 
-	module.exports = IDBModel.extend({
+	module.exports = function (parent){
 
-	  idAttribute: 'local_id',
-
-	  remoteIdAttribute: 'id',
-
-	  url: function () {
-	    var remoteId = this.get(this.remoteIdAttribute),
-	        urlRoot  = _.result(this.collection, 'url');
-
-	    if (remoteId) {
-	      return '' + urlRoot + '/' + remoteId + '/';
-	    }
-	    return urlRoot;
-	  },
-
-	  /* jshint -W071, -W074, -W116 */
-	  save: function(key, val, options){
-	    var attrs;
-	    if (key == null || typeof key === 'object') {
-	      attrs = key;
-	      options = val;
-	    } else {
-	      (attrs = {})[key] = val;
-	    }
-
-	    options = options || {};
-	    var method = this.hasRemoteId() ? 'update' : 'create';
-	    this.set({ _state: this.collection.states[method] }, { silent: true });
-
-	    if(!options.remote){
-	      return IDBModel.prototype.save.apply(this, arguments);
-	    }
-
-	    var model = this, success = options.success, local_id;
-	    _.extend(options, { success: undefined, remote: false });
-	    if (options.patch && !options.attrs) {
-	      options.attrs = this.prepareRemoteJSON(attrs);
-	    }
-
-	    return this.sync(method, this, options)
-	      .then(function(resp){
-	        local_id = resp.local_id;
-	        _.extend(options, { remote: true });
-	        return model.sync(method, model, options);
-	      })
-	      .then(function(resp){
-	        resp = model.parse(resp, options);
-	        _.extend(resp, { local_id: local_id, _state: undefined });
-	        _.extend(options, { remote: false, success: success });
-	        return IDBModel.prototype.save.call(model, resp, options);
-	      });
-	  },
-	  /* jshint +W071, +W074, +W116 */
-
-	  fetch: function(options){
-	    options = _.extend({parse: true}, options);
-
-	    if(!options.remote){
-	      return IDBModel.prototype.fetch.call(this, options);
-	    }
-
-	    var model = this;
-
-	    return this.sync('read', this, options)
-	      .then(function (resp) {
-	        resp = model.parse(resp, options);
-	        _.extend(options, { remote: false });
-	        return IDBModel.prototype.save.call(model, resp, options);
-	      });
-	  },
-
-	  hasRemoteId: function () {
-	    return !!this.get(this.remoteIdAttribute);
-	  },
-
-	  toJSON: function (options) {
-	    options = options || {};
-	    var json = IDBModel.prototype.toJSON.apply(this, arguments);
-	    if (options.remote && this.name) {
-	      json = this.prepareRemoteJSON(json);
-	    }
-	    return json;
-	  },
-
-	  prepareRemoteJSON: function (json) {
-	    if(_.has(json, '_state')){
-	      delete json._state;
-	    }
-	    var nested = {};
-	    nested[this.name] = json;
-	    return nested;
-	  },
-
-	  parse: function (resp, options) {
-	    options = options || {};
-	    if (options.remote) {
-	      resp = resp && resp[this.name] ? resp[this.name] : resp;
-	    }
-	    return IDBModel.prototype.parse.call(this, resp, options);
+	  /**
+	   * ensure IDBCollection first
+	   */
+	  var decorators = _.get(parent, ['prototype', 'decorators']);
+	  if(!_.includes(parent._extended, 'idb')){
+	    parent = _.has(decorators, 'idb') ? decorators['idb'](parent) : parent;
+	    _.isArray(parent._extended) ? parent._extended.push('idb') : parent._extended = ['idb'];
 	  }
 
-	});
+	  var DualModel = parent.extend({
+
+	    sync: sync,
+
+	    idAttribute: 'local_id',
+
+	    remoteIdAttribute: 'id',
+
+	    url: function () {
+	      var remoteId = this.get(this.remoteIdAttribute),
+	        urlRoot  = _.result(this.collection, 'url');
+
+	      if (remoteId) {
+	        return '' + urlRoot + '/' + remoteId + '/';
+	      }
+	      return urlRoot;
+	    },
+
+	    /* jshint -W071, -W074, -W116 */
+	    save: function(key, val, options){
+	      var attrs;
+	      if (key == null || typeof key === 'object') {
+	        attrs = key;
+	        options = val;
+	      } else {
+	        (attrs = {})[key] = val;
+	      }
+
+	      options = options || {};
+	      var method = this.hasRemoteId() ? 'update' : 'create';
+	      this.set({ _state: this.collection.states[method] }, { silent: true });
+
+	      if(!options.remote){
+	        return parent.prototype.save.apply(this, arguments);
+	      }
+
+	      var model = this, success = options.success, local_id;
+	      _.extend(options, { success: undefined, remote: false });
+	      if (options.patch && !options.attrs) {
+	        options.attrs = this.prepareRemoteJSON(attrs);
+	      }
+
+	      return this.sync(method, this, options)
+	        .then(function(resp){
+	          local_id = resp.local_id;
+	          _.extend(options, { remote: true });
+	          return model.sync(method, model, options);
+	        })
+	        .then(function(resp){
+	          resp = model.parse(resp, options);
+	          _.extend(resp, { local_id: local_id, _state: undefined });
+	          _.extend(options, { remote: false, success: success });
+	          return parent.prototype.save.call(model, resp, options);
+	        });
+	    },
+	    /* jshint +W071, +W074, +W116 */
+
+	    fetch: function(options){
+	      options = _.extend({parse: true}, options);
+
+	      if(!options.remote){
+	        return parent.prototype.fetch.call(this, options);
+	      }
+
+	      var model = this;
+
+	      return this.sync('read', this, options)
+	        .then(function (resp) {
+	          resp = model.parse(resp, options);
+	          _.extend(options, { remote: false });
+	          return parent.prototype.save.call(model, resp, options);
+	        });
+	    },
+
+	    hasRemoteId: function () {
+	      return !!this.get(this.remoteIdAttribute);
+	    },
+
+	    toJSON: function (options) {
+	      options = options || {};
+	      var json = parent.prototype.toJSON.apply(this, arguments);
+	      if (options.remote && this.name) {
+	        json = this.prepareRemoteJSON(json);
+	      }
+	      return json;
+	    },
+
+	    prepareRemoteJSON: function (json) {
+	      if(_.has(json, '_state')){
+	        delete json._state;
+	      }
+	      var nested = {};
+	      nested[this.name] = json;
+	      return nested;
+	    },
+
+	    parse: function (resp, options) {
+	      options = options || {};
+	      if (options.remote) {
+	        resp = resp && resp[this.name] ? resp[this.name] : resp;
+	      }
+	      return parent.prototype.parse.call(this, resp, options);
+	    }
+	  });
+
+	  return DualModel;
+
+	};
+
+/***/ },
+/* 12 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var sync = __webpack_require__(6);
+
+	module.exports = function (parent){
+
+	  var IDBModel = parent.extend({
+	    sync: sync
+	  });
+
+	  return IDBModel;
+
+	};
 
 /***/ }
 /******/ ]);
