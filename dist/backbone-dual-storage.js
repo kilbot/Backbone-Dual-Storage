@@ -50,12 +50,14 @@ var app =
 	 */
 	var bb = __webpack_require__(1);
 	var extend = __webpack_require__(2);
+	var _ = __webpack_require__(3);
+
+	var collectionSubClasses = {
+	  dual: __webpack_require__(4),
+	  idb: __webpack_require__(7)
+	};
 
 	var Collection = bb.Collection.extend({
-	  decorators :{
-	    dual: __webpack_require__(4),
-	    idb: __webpack_require__(7)
-	  },
 	  constructor: function () {
 	    bb.Collection.apply(this, arguments);
 	    this.isNew(true);
@@ -68,17 +70,39 @@ var app =
 	      });
 	    }
 	    return this._isNew;
+	  },
+	  _getSubClasses: function(key){
+	    if(key){
+	      return _.get(collectionSubClasses, key);
+	    }
+	    return collectionSubClasses;
 	  }
 	});
 
+	var modelSubClasses = {
+	  dual: __webpack_require__(11),
+	  idb: __webpack_require__(12)
+	};
+
 	var Model = bb.Model.extend({
-	  decorators :{
-	    dual: __webpack_require__(11),
-	    idb: __webpack_require__(12)
+	  _getSubClasses: function(key){
+	    if(key){
+	      return _.get(modelSubClasses, key);
+	    }
+	    return modelSubClasses;
 	  }
 	});
 
 	Collection.extend = Model.extend = extend;
+
+	Collection._extend = Model._extend = function(key, parent){
+	  var subClass = parent.prototype._getSubClasses(key);
+	  if(subClass && !_.includes(parent.prototype._extended, key)){
+	    parent = subClass(parent);
+	    parent.prototype._extended = _.union(parent.prototype._extended, [key]);
+	  }
+	  return parent;
+	};
 
 	module.exports = {
 	  Collection  : Collection,
@@ -101,19 +125,15 @@ var app =
 	  var parent = this;
 	  var child;
 	  var extend;
-	  var decorators = _.get(parent, ['prototype', 'decorators']);
 
-	  if (!_.isEmpty(decorators) && protoProps && _.has(protoProps, 'extends')) {
+	  if (protoProps && _.has(protoProps, 'extends')) {
 	    extend = _.isString(protoProps.extends) ? [protoProps.extends] : protoProps.extends;
 	  }
 
-	  // russian doll decorators
+	  // russian doll subclasses
 	  if(extend && _.isArray(extend)){
 	    _.each(extend, function(key){
-	      if(!_.includes(parent._extended, key)){
-	        parent = _.has(decorators, key) ? decorators[key](parent) : parent;
-	        _.isArray(parent._extended) ? parent._extended.push(key) : parent._extended = [key];
-	      }
+	      parent = parent._extend(key, parent);
 	    });
 	  }
 
@@ -155,13 +175,7 @@ var app =
 	  /**
 	   * ensure IDBCollection first
 	   */
-	  var decorators = _.get(parent, ['prototype', 'decorators']);
-	  if(!_.includes(parent._extended, 'idb')){
-	    parent = _.has(decorators, 'idb') ? decorators['idb'](parent) : parent;
-	    _.isArray(parent._extended) ? parent._extended.push('idb') : parent._extended = ['idb'];
-	  }
-
-	  var DualCollection = parent.extend({
+	  var DualCollection = parent._extend('idb', parent).extend({
 	    sync: sync,
 
 	    keyPath: 'local_id',
@@ -1107,13 +1121,7 @@ var app =
 	  /**
 	   * ensure IDBCollection first
 	   */
-	  var decorators = _.get(parent, ['prototype', 'decorators']);
-	  if(!_.includes(parent._extended, 'idb')){
-	    parent = _.has(decorators, 'idb') ? decorators['idb'](parent) : parent;
-	    _.isArray(parent._extended) ? parent._extended.push('idb') : parent._extended = ['idb'];
-	  }
-
-	  var DualModel = parent.extend({
+	  var DualModel = parent._extend('idb', parent).extend({
 
 	    sync: sync,
 

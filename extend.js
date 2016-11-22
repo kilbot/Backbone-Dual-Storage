@@ -4,19 +4,15 @@ module.exports = function(protoProps, staticProps){
   var parent = this;
   var child;
   var extend;
-  var decorators = _.get(parent, ['prototype', 'decorators']);
 
-  if (!_.isEmpty(decorators) && protoProps && _.has(protoProps, 'extends')) {
+  if (protoProps && _.has(protoProps, 'extends')) {
     extend = _.isString(protoProps.extends) ? [protoProps.extends] : protoProps.extends;
   }
 
-  // russian doll decorators
+  // russian doll subclasses
   if(extend && _.isArray(extend)){
     _.each(extend, function(key){
-      if(!_.includes(parent._extended, key)){
-        parent = _.has(decorators, key) ? decorators[key](parent) : parent;
-        _.isArray(parent._extended) ? parent._extended.push(key) : parent._extended = [key];
-      }
+      parent = parent._extend(key, parent);
     });
   }
 

@@ -6,7 +6,7 @@ describe('Dual Collections', function () {
   });
 
   var DualCollection = app.Collection.extend({
-    extends: ['dual'],
+    extends: ['dual', 'idb'],
     model: DualModel
   });
 

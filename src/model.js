@@ -6,13 +6,7 @@ module.exports = function (parent){
   /**
    * ensure IDBCollection first
    */
-  var decorators = _.get(parent, ['prototype', 'decorators']);
-  if(!_.includes(parent._extended, 'idb')){
-    parent = _.has(decorators, 'idb') ? decorators['idb'](parent) : parent;
-    _.isArray(parent._extended) ? parent._extended.push('idb') : parent._extended = ['idb'];
-  }
-
-  var DualModel = parent.extend({
+  var DualModel = parent._extend('idb', parent).extend({
 
     sync: sync,
 
