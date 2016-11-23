@@ -17,13 +17,25 @@ module.exports = function (parent){
       {name: '_state', keyPath: '_state'}
     ],
 
+    pageSize: 10,
+
     // delayed states
     states: {
+      //'patch'  : 'UPDATE_FAILED',
       'update': 'UPDATE_FAILED',
       'create': 'CREATE_FAILED',
       'delete': 'DELETE_FAILED',
       'read'  : 'READ_FAILED'
     },
+
+    url: function(){
+      var wc_api = Radio.request('entities', 'get', {
+        type: 'option',
+        name: 'wc_api'
+      });
+      return wc_api + this.name;
+    },
+
 
     toJSON: function (options) {
       options = options || {};
@@ -76,11 +88,12 @@ module.exports = function (parent){
     fetchLocal: function (options) {
       var collection = this, isNew = this.isNew();
       _.extend(options, {set: false});
-
       return this.sync('read', this, options)
         .then(function (response) {
           if(options.remote === false) { return response; }
-          if(isNew && _.size(response) === 0) { return collection.fetchRemote(options); }
+          if(_.size(response) === 0 && (isNew || collection._delayed !== 0)) {
+            return collection.fetchRemote(options);
+          }
           return collection.fetchReadDelayed(response);
         })
         .then(function(response){
@@ -111,7 +124,7 @@ module.exports = function (parent){
      */
     fetchRemoteIds: function (last_update, options) {
       options = options || {};
-      var self = this, url = _.result(this, 'url') + '/ids';
+      var collection = this, url = _.result(this, 'url') + '/ids';
 
       _.extend(options, {
         url   : url,
@@ -127,7 +140,7 @@ module.exports = function (parent){
           merge  : function (local, remote) {
             if(!local || local.updated_at < remote.updated_at){
               local = local || remote;
-              local._state = self.states.read;
+              local._state = collection.states.read;
             }
             return local;
           }
@@ -154,8 +167,29 @@ module.exports = function (parent){
         });
     },
 
+    // fullSync: function(options){
+    //   options = options || {};
+    //   var collection = this;
+    //   return this.fetchRemoteIds(null, options)
+    //     .then(function(response){
+    //       collection._parseFetchOptions(options);
+    //       collection.trigger('sync', collection, response, options);
+    //     });
+    // },
+
     fullSync: function(options){
-      return this.fetchRemoteIds(options);
+      var collection = this;
+      return this.fetchRemoteIds(null, options)
+        .then(function(response){
+          return collection.destroy(null, {
+            index: 'id',
+            data: {
+              filter: {
+                not_in: _.map(response, 'id')
+              }
+            }
+          });
+        });
     },
 
     fetchReadDelayed: function(response){
@@ -181,14 +215,18 @@ module.exports = function (parent){
     },
 
     _parseFetchOptions: function(options){
+      options = options || {};
       if(options.idb){
         this._total = options.idb.total;
         this._delayed = options.idb.delayed;
       }
       if(options.xhr){
-        this._total = options.xhr.getResponseHeader('X-WC-Total');
-        this._delayed = 0;
+        this._total = parseInt( options.xhr.getResponseHeader('X-WC-Total') );
       }
+    },
+
+    hasNextPage: function(){
+      return this.length < this._total;
     }
 
   });

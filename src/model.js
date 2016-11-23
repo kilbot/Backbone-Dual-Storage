@@ -4,7 +4,7 @@ var sync = require('./sync');
 module.exports = function (parent){
 
   /**
-   * ensure IDBCollection first
+   * ensure IDBModel first
    */
   var DualModel = parent._extend('idb', parent).extend({
 
@@ -14,11 +14,16 @@ module.exports = function (parent){
 
     remoteIdAttribute: 'id',
 
-    url: function () {
-      var remoteId = this.get(this.remoteIdAttribute),
-        urlRoot  = _.result(this.collection, 'url');
+    isDelayed: function(state){
+      state = state || this.get('_state');
+      return _.includes(this.collection.states, state);
+    },
 
-      if (remoteId) {
+    url: function(){
+      var remoteId = this.get(this.remoteIdAttribute),
+        urlRoot = _.result(this.collection, 'url');
+
+      if(remoteId){
         return '' + urlRoot + '/' + remoteId + '/';
       }
       return urlRoot;
@@ -36,7 +41,7 @@ module.exports = function (parent){
 
       options = options || {};
       var method = this.hasRemoteId() ? 'update' : 'create';
-      this.set({ _state: this.collection.states[method] }, { silent: true });
+      this.set({ _state: this.collection.states[method] });
 
       if(!options.remote){
         return parent.prototype.save.apply(this, arguments);
@@ -56,7 +61,7 @@ module.exports = function (parent){
         })
         .then(function(resp){
           resp = model.parse(resp, options);
-          _.extend(resp, { local_id: local_id, _state: undefined });
+          model.set({ _state: undefined });
           _.extend(options, { remote: false, success: success });
           return parent.prototype.save.call(model, resp, options);
         });
@@ -109,6 +114,7 @@ module.exports = function (parent){
       }
       return parent.prototype.parse.call(this, resp, options);
     }
+
   });
 
   return DualModel;
