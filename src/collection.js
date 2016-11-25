@@ -29,11 +29,7 @@ module.exports = function (parent){
     },
 
     url: function(){
-      var wc_api = Radio.request('entities', 'get', {
-        type: 'option',
-        name: 'wc_api'
-      });
-      return wc_api + this.name;
+      return this.wc_api + this.name;
     },
 
 
@@ -221,7 +217,7 @@ module.exports = function (parent){
         this._delayed = options.idb.delayed;
       }
       if(options.xhr){
-        this._total = parseInt( options.xhr.getResponseHeader('X-WC-Total') );
+        this._total = parseInt( options.xhr.getResponseHeader('X-WC-Total'), 10 );
       }
     },
 

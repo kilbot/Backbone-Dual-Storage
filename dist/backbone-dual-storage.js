@@ -186,13 +186,21 @@ var app =
 	      {name: '_state', keyPath: '_state'}
 	    ],
 
+	    pageSize: 10,
+
 	    // delayed states
 	    states: {
+	      //'patch'  : 'UPDATE_FAILED',
 	      'update': 'UPDATE_FAILED',
 	      'create': 'CREATE_FAILED',
 	      'delete': 'DELETE_FAILED',
 	      'read'  : 'READ_FAILED'
 	    },
+
+	    url: function(){
+	      return this.wc_api + this.name;
+	    },
+
 
 	    toJSON: function (options) {
 	      options = options || {};
@@ -245,11 +253,12 @@ var app =
 	    fetchLocal: function (options) {
 	      var collection = this, isNew = this.isNew();
 	      _.extend(options, {set: false});
-
 	      return this.sync('read', this, options)
 	        .then(function (response) {
 	          if(options.remote === false) { return response; }
-	          if(isNew && _.size(response) === 0) { return collection.fetchRemote(options); }
+	          if(_.size(response) === 0 && (isNew || collection._delayed !== 0)) {
+	            return collection.fetchRemote(options);
+	          }
 	          return collection.fetchReadDelayed(response);
 	        })
 	        .then(function(response){
@@ -280,7 +289,7 @@ var app =
 	     */
 	    fetchRemoteIds: function (last_update, options) {
 	      options = options || {};
-	      var self = this, url = _.result(this, 'url') + '/ids';
+	      var collection = this, url = _.result(this, 'url') + '/ids';
 
 	      _.extend(options, {
 	        url   : url,
@@ -296,7 +305,7 @@ var app =
 	          merge  : function (local, remote) {
 	            if(!local || local.updated_at < remote.updated_at){
 	              local = local || remote;
-	              local._state = self.states.read;
+	              local._state = collection.states.read;
 	            }
 	            return local;
 	          }
@@ -323,8 +332,29 @@ var app =
 	        });
 	    },
 
+	    // fullSync: function(options){
+	    //   options = options || {};
+	    //   var collection = this;
+	    //   return this.fetchRemoteIds(null, options)
+	    //     .then(function(response){
+	    //       collection._parseFetchOptions(options);
+	    //       collection.trigger('sync', collection, response, options);
+	    //     });
+	    // },
+
 	    fullSync: function(options){
-	      return this.fetchRemoteIds(options);
+	      var collection = this;
+	      return this.fetchRemoteIds(null, options)
+	        .then(function(response){
+	          return collection.destroy(null, {
+	            index: 'id',
+	            data: {
+	              filter: {
+	                not_in: _.map(response, 'id')
+	              }
+	            }
+	          });
+	        });
 	    },
 
 	    fetchReadDelayed: function(response){
@@ -350,14 +380,18 @@ var app =
 	    },
 
 	    _parseFetchOptions: function(options){
+	      options = options || {};
 	      if(options.idb){
 	        this._total = options.idb.total;
 	        this._delayed = options.idb.delayed;
 	      }
 	      if(options.xhr){
-	        this._total = options.xhr.getResponseHeader('X-WC-Total');
-	        this._delayed = 0;
+	        this._total = parseInt( options.xhr.getResponseHeader('X-WC-Total'), 10 );
 	      }
+	    },
+
+	    hasNextPage: function(){
+	      return this.length < this._total;
 	    }
 
 	  });
@@ -1119,7 +1153,7 @@ var app =
 	module.exports = function (parent){
 
 	  /**
-	   * ensure IDBCollection first
+	   * ensure IDBModel first
 	   */
 	  var DualModel = parent._extend('idb', parent).extend({
 
@@ -1129,11 +1163,16 @@ var app =
 
 	    remoteIdAttribute: 'id',
 
-	    url: function () {
-	      var remoteId = this.get(this.remoteIdAttribute),
-	        urlRoot  = _.result(this.collection, 'url');
+	    isDelayed: function(state){
+	      state = state || this.get('_state');
+	      return _.includes(this.collection.states, state);
+	    },
 
-	      if (remoteId) {
+	    url: function(){
+	      var remoteId = this.get(this.remoteIdAttribute),
+	        urlRoot = _.result(this.collection, 'url');
+
+	      if(remoteId){
 	        return '' + urlRoot + '/' + remoteId + '/';
 	      }
 	      return urlRoot;
@@ -1151,7 +1190,7 @@ var app =
 
 	      options = options || {};
 	      var method = this.hasRemoteId() ? 'update' : 'create';
-	      this.set({ _state: this.collection.states[method] }, { silent: true });
+	      this.set({ _state: this.collection.states[method] });
 
 	      if(!options.remote){
 	        return parent.prototype.save.apply(this, arguments);
@@ -1171,7 +1210,7 @@ var app =
 	        })
 	        .then(function(resp){
 	          resp = model.parse(resp, options);
-	          _.extend(resp, { local_id: local_id, _state: undefined });
+	          model.set({ _state: undefined });
 	          _.extend(options, { remote: false, success: success });
 	          return parent.prototype.save.call(model, resp, options);
 	        });
@@ -1224,6 +1263,7 @@ var app =
 	      }
 	      return parent.prototype.parse.call(this, resp, options);
 	    }
+
 	  });
 
 	  return DualModel;
