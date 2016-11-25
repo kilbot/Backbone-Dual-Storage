@@ -1,13 +1,13 @@
 var _ = require('lodash');
-var sync = require('./sync');
 
 module.exports = function (parent){
 
   /**
    * ensure IDBCollection first
    */
-  var DualCollection = parent._extend('idb', parent).extend({
-    sync: sync,
+  var IDBCollection  = parent._extend('idb', parent);
+
+  var DualCollection = IDBCollection.extend({
 
     keyPath: 'local_id',
 
@@ -32,10 +32,16 @@ module.exports = function (parent){
       return this.wc_api + this.name;
     },
 
+    sync: function(method, collection, options){
+      if(_.get(options, 'remote')) {
+        return parent.prototype.sync.apply(this, arguments);
+      }
+      return IDBCollection.prototype.sync.apply(this, arguments);
+    },
 
     toJSON: function (options) {
       options = options || {};
-      var json = parent.prototype.toJSON.apply(this, arguments);
+      var json = IDBCollection.prototype.toJSON.apply(this, arguments);
       if (options.remote && this.name) {
         var nested = {};
         nested[this.name] = json;
@@ -49,7 +55,7 @@ module.exports = function (parent){
       if (options.remote) {
         resp = resp && resp[this.name] ? resp[this.name] : resp;
       }
-      return parent.prototype.parse.call(this, resp, options);
+      return IDBCollection.prototype.parse.call(this, resp, options);
     },
 
     /* jshint -W071, -W074 */

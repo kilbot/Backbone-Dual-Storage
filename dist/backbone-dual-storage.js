@@ -54,7 +54,7 @@ var app =
 
 	var collectionSubClasses = {
 	  dual: __webpack_require__(4),
-	  idb: __webpack_require__(7)
+	  idb: __webpack_require__(5)
 	};
 
 	var Collection = bb.Collection.extend({
@@ -80,8 +80,8 @@ var app =
 	});
 
 	var modelSubClasses = {
-	  dual: __webpack_require__(11),
-	  idb: __webpack_require__(12)
+	  dual: __webpack_require__(10),
+	  idb: __webpack_require__(11)
 	};
 
 	var Model = bb.Model.extend({
@@ -168,15 +168,15 @@ var app =
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
-	var sync = __webpack_require__(5);
 
 	module.exports = function (parent){
 
 	  /**
 	   * ensure IDBCollection first
 	   */
-	  var DualCollection = parent._extend('idb', parent).extend({
-	    sync: sync,
+	  var IDBCollection  = parent._extend('idb', parent);
+
+	  var DualCollection = IDBCollection.extend({
 
 	    keyPath: 'local_id',
 
@@ -201,10 +201,16 @@ var app =
 	      return this.wc_api + this.name;
 	    },
 
+	    sync: function(method, collection, options){
+	      if(_.get(options, 'remote')) {
+	        return parent.prototype.sync.apply(this, arguments);
+	      }
+	      return IDBCollection.prototype.sync.apply(this, arguments);
+	    },
 
 	    toJSON: function (options) {
 	      options = options || {};
-	      var json = parent.prototype.toJSON.apply(this, arguments);
+	      var json = IDBCollection.prototype.toJSON.apply(this, arguments);
 	      if (options.remote && this.name) {
 	        var nested = {};
 	        nested[this.name] = json;
@@ -218,7 +224,7 @@ var app =
 	      if (options.remote) {
 	        resp = resp && resp[this.name] ? resp[this.name] : resp;
 	      }
-	      return parent.prototype.parse.call(this, resp, options);
+	      return IDBCollection.prototype.parse.call(this, resp, options);
 	    },
 
 	    /* jshint -W071, -W074 */
@@ -405,69 +411,8 @@ var app =
 
 	var bb = __webpack_require__(1);
 	var _ = __webpack_require__(3);
-	var ajaxSync = bb.sync;
-	var idbSync = __webpack_require__(6);
-
-	module.exports = function(method, entity, options) {
-	  var idb = _.get(entity, ['collection', 'db'], entity.db);
-	  if(!options.remote && idb) {
-	    return idbSync.apply(this, arguments);
-	  }
-	  return ajaxSync.apply(this, arguments);
-	};
-
-/***/ },
-/* 6 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var bb = __webpack_require__(1);
-
-	/* jshint -W074 */
-	module.exports = function(method, entity, options) {
-	  options = options || {};
-	  var isModel = entity instanceof bb.Model,
-	      data = options.attrsArray,
-	      db = entity.db,
-	      key;
-
-	  if(isModel){
-	    db = entity.collection.db;
-	    key = options.index ? entity.get(options.index) : entity.id;
-	    data = entity.toJSON();
-	  }
-
-	  return db.open()
-	    .then(function () {
-	      switch (method) {
-	        case 'create':
-	        case 'update':
-	        case 'patch':
-	          return db.update(data, options);
-	        case 'read':
-	          return db.read(key, options);
-	        case 'delete':
-	          return db.delete(key, options);
-	      }
-	    })
-	    .then(function (resp) {
-	      if (options.success) { options.success(resp); }
-	      return resp;
-	    })
-	    .catch(function (resp) {
-	      if (options.error) { options.error(resp); }
-	    });
-
-	};
-	/* jshint +W074 */
-
-/***/ },
-/* 7 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var bb = __webpack_require__(1);
-	var _ = __webpack_require__(3);
-	var IDBAdapter = __webpack_require__(8);
-	var sync = __webpack_require__(6);
+	var IDBAdapter = __webpack_require__(6);
+	var sync = __webpack_require__(9);
 
 	module.exports = function (parent){
 
@@ -590,12 +535,12 @@ var app =
 	};
 
 /***/ },
-/* 8 */
+/* 6 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* jshint -W071, -W074 */
 	var _ = __webpack_require__(3);
-	var matchMaker = __webpack_require__(9);
+	var matchMaker = __webpack_require__(7);
 
 	var is_safari = window.navigator.userAgent.indexOf('Safari') !== -1 &&
 	  window.navigator.userAgent.indexOf('Chrome') === -1 &&
@@ -1005,11 +950,11 @@ var app =
 	/* jshint +W071, +W074 */
 
 /***/ },
-/* 9 */
+/* 7 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
-	var match = __webpack_require__(10);
+	var match = __webpack_require__(8);
 
 	var defaults = {
 	  fields: ['title'] // json property to use for simple string search
@@ -1090,7 +1035,7 @@ var app =
 	};
 
 /***/ },
-/* 10 */
+/* 8 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
@@ -1144,20 +1089,63 @@ var app =
 	};
 
 /***/ },
-/* 11 */
+/* 9 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var bb = __webpack_require__(1);
+
+	/* jshint -W074 */
+	module.exports = function(method, entity, options) {
+	  options = options || {};
+	  var isModel = entity instanceof bb.Model,
+	      data = options.attrsArray,
+	      db = entity.db,
+	      key;
+
+	  if(isModel){
+	    db = entity.collection.db;
+	    key = options.index ? entity.get(options.index) : entity.id;
+	    data = entity.toJSON();
+	  }
+
+	  return db.open()
+	    .then(function () {
+	      switch (method) {
+	        case 'create':
+	        case 'update':
+	        case 'patch':
+	          return db.update(data, options);
+	        case 'read':
+	          return db.read(key, options);
+	        case 'delete':
+	          return db.delete(key, options);
+	      }
+	    })
+	    .then(function (resp) {
+	      if (options.success) { options.success(resp); }
+	      return resp;
+	    })
+	    .catch(function (resp) {
+	      if (options.error) { options.error(resp); }
+	    });
+
+	};
+	/* jshint +W074 */
+
+/***/ },
+/* 10 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
-	var sync = __webpack_require__(5);
 
 	module.exports = function (parent){
 
 	  /**
 	   * ensure IDBModel first
 	   */
-	  var DualModel = parent._extend('idb', parent).extend({
+	  var IDBModel = parent._extend('idb', parent);
 
-	    sync: sync,
+	  var DualModel = IDBModel.extend({
 
 	    idAttribute: 'local_id',
 
@@ -1178,6 +1166,13 @@ var app =
 	      return urlRoot;
 	    },
 
+	    sync: function(method, model, options){
+	      if(_.get(options, 'remote')) {
+	        return parent.prototype.sync.apply(this, arguments);
+	      }
+	      return IDBModel.prototype.sync.apply(this, arguments);
+	    },
+
 	    /* jshint -W071, -W074, -W116 */
 	    save: function(key, val, options){
 	      var attrs;
@@ -1193,7 +1188,7 @@ var app =
 	      this.set({ _state: this.collection.states[method] });
 
 	      if(!options.remote){
-	        return parent.prototype.save.apply(this, arguments);
+	        return IDBModel.prototype.save.apply(this, arguments);
 	      }
 
 	      var model = this, success = options.success, local_id;
@@ -1212,7 +1207,7 @@ var app =
 	          resp = model.parse(resp, options);
 	          model.set({ _state: undefined });
 	          _.extend(options, { remote: false, success: success });
-	          return parent.prototype.save.call(model, resp, options);
+	          return IDBModel.prototype.save.call(model, resp, options);
 	        });
 	    },
 	    /* jshint +W071, +W074, +W116 */
@@ -1221,7 +1216,7 @@ var app =
 	      options = _.extend({parse: true}, options);
 
 	      if(!options.remote){
-	        return parent.prototype.fetch.call(this, options);
+	        return IDBModel.prototype.fetch.call(this, options);
 	      }
 
 	      var model = this;
@@ -1230,7 +1225,7 @@ var app =
 	        .then(function (resp) {
 	          resp = model.parse(resp, options);
 	          _.extend(options, { remote: false });
-	          return parent.prototype.save.call(model, resp, options);
+	          return IDBModel.prototype.save.call(model, resp, options);
 	        });
 	    },
 
@@ -1240,7 +1235,7 @@ var app =
 
 	    toJSON: function (options) {
 	      options = options || {};
-	      var json = parent.prototype.toJSON.apply(this, arguments);
+	      var json = IDBModel.prototype.toJSON.apply(this, arguments);
 	      if (options.remote && this.name) {
 	        json = this.prepareRemoteJSON(json);
 	      }
@@ -1261,7 +1256,7 @@ var app =
 	      if (options.remote) {
 	        resp = resp && resp[this.name] ? resp[this.name] : resp;
 	      }
-	      return parent.prototype.parse.call(this, resp, options);
+	      return IDBModel.prototype.parse.call(this, resp, options);
 	    }
 
 	  });
@@ -1271,10 +1266,10 @@ var app =
 	};
 
 /***/ },
-/* 12 */
+/* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var sync = __webpack_require__(6);
+	var sync = __webpack_require__(9);
 
 	module.exports = function (parent){
 

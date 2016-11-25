@@ -19,13 +19,10 @@ describe('Dual Collections', function () {
   it('should be in a valid state', function () {
     var collection = new DualCollection();
     expect(collection).to.be.ok;
-  });
 
-  it('should decorate the model', function(){
-    var collection = new DualCollection();
+    // check model
     var model = collection.add({});
     expect(model.special).to.be.true;
-    expect(model.sync).eqls(collection.sync);
   });
 
   it('should create to local IndexedDB', function (done) {

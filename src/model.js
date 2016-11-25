@@ -1,14 +1,13 @@
 var _ = require('lodash');
-var sync = require('./sync');
 
 module.exports = function (parent){
 
   /**
    * ensure IDBModel first
    */
-  var DualModel = parent._extend('idb', parent).extend({
+  var IDBModel = parent._extend('idb', parent);
 
-    sync: sync,
+  var DualModel = IDBModel.extend({
 
     idAttribute: 'local_id',
 
@@ -29,6 +28,13 @@ module.exports = function (parent){
       return urlRoot;
     },
 
+    sync: function(method, model, options){
+      if(_.get(options, 'remote')) {
+        return parent.prototype.sync.apply(this, arguments);
+      }
+      return IDBModel.prototype.sync.apply(this, arguments);
+    },
+
     /* jshint -W071, -W074, -W116 */
     save: function(key, val, options){
       var attrs;
@@ -44,7 +50,7 @@ module.exports = function (parent){
       this.set({ _state: this.collection.states[method] });
 
       if(!options.remote){
-        return parent.prototype.save.apply(this, arguments);
+        return IDBModel.prototype.save.apply(this, arguments);
       }
 
       var model = this, success = options.success, local_id;
@@ -63,7 +69,7 @@ module.exports = function (parent){
           resp = model.parse(resp, options);
           model.set({ _state: undefined });
           _.extend(options, { remote: false, success: success });
-          return parent.prototype.save.call(model, resp, options);
+          return IDBModel.prototype.save.call(model, resp, options);
         });
     },
     /* jshint +W071, +W074, +W116 */
@@ -72,7 +78,7 @@ module.exports = function (parent){
       options = _.extend({parse: true}, options);
 
       if(!options.remote){
-        return parent.prototype.fetch.call(this, options);
+        return IDBModel.prototype.fetch.call(this, options);
       }
 
       var model = this;
@@ -81,7 +87,7 @@ module.exports = function (parent){
         .then(function (resp) {
           resp = model.parse(resp, options);
           _.extend(options, { remote: false });
-          return parent.prototype.save.call(model, resp, options);
+          return IDBModel.prototype.save.call(model, resp, options);
         });
     },
 
@@ -91,7 +97,7 @@ module.exports = function (parent){
 
     toJSON: function (options) {
       options = options || {};
-      var json = parent.prototype.toJSON.apply(this, arguments);
+      var json = IDBModel.prototype.toJSON.apply(this, arguments);
       if (options.remote && this.name) {
         json = this.prepareRemoteJSON(json);
       }
@@ -112,7 +118,7 @@ module.exports = function (parent){
       if (options.remote) {
         resp = resp && resp[this.name] ? resp[this.name] : resp;
       }
-      return parent.prototype.parse.call(this, resp, options);
+      return IDBModel.prototype.parse.call(this, resp, options);
     }
 
   });
