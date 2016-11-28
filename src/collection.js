@@ -17,8 +17,6 @@ module.exports = function (parent){
       {name: '_state', keyPath: '_state'}
     ],
 
-    pageSize: 10,
-
     // delayed states
     states: {
       //'patch'  : 'UPDATE_FAILED',
@@ -32,48 +30,43 @@ module.exports = function (parent){
       return this.wc_api + this.name;
     },
 
-    sync: function(method, collection, options){
+    /**
+     *
+     */
+    sync: function(method, model, options){
       if(_.get(options, 'remote')) {
-        return parent.prototype.sync.apply(this, arguments);
+        return this.syncRemote(method, model, options);
       }
-      return IDBCollection.prototype.sync.apply(this, arguments);
+      return this.syncLocal(method, model, options);
     },
 
-    toJSON: function (options) {
-      options = options || {};
-      var json = IDBCollection.prototype.toJSON.apply(this, arguments);
-      if (options.remote && this.name) {
-        var nested = {};
-        nested[this.name] = json;
-        return nested;
-      }
-      return json;
+    /**
+     *
+     */
+    syncLocal: function(method, model, options){
+      _.extend(options, { remote: false });
+      return IDBCollection.prototype.sync.call(this, method, model, options);
     },
 
-    parse: function (resp, options) {
-      options = options || {};
-      if (options.remote) {
-        resp = resp && resp[this.name] ? resp[this.name] : resp;
-      }
-      return IDBCollection.prototype.parse.call(this, resp, options);
+    /**
+     *
+     */
+    syncRemote: function(method, model, options){
+      _.extend(options, { remote: true });
+      return parent.prototype.sync.call(this, method, model, options);
     },
 
-    /* jshint -W071, -W074 */
+    /**
+     *
+     */
     fetch: function (options) {
-      options = _.extend({parse: true}, options);
       var collection = this, success = options.success;
-      var _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
-      options.success = undefined;
+      options = _.extend({parse: true}, options, {success: undefined});
+      var fetch = _.get(options, 'remote') ? this.fetchRemote(options) : this.fetchLocal(options);
 
-      if(this.pageSize){
-        var limit = _.get(options, ['data', 'filter', 'limit']);
-        if(!limit) { _.set(options, 'data.filter.limit', this.pageSize); }
-      }
-
-      return _fetch.call(this, options)
+      fetch
         .then(function (response) {
           var method = options.reset ? 'reset' : 'set';
-          collection._parseFetchOptions(options);
           collection[method](response, options);
           if (success) {
             success.call(options.context, collection, response, options);
@@ -82,24 +75,29 @@ module.exports = function (parent){
           return response;
         });
     },
-    /* jshint +W071, +W074 */
 
     /**
      *
      */
     fetchLocal: function (options) {
-      var collection = this, isNew = this.isNew();
-      _.extend(options, {set: false});
-      return this.sync('read', this, options)
+      var collection = this, firstSync = this.isNew();
+      _.extend(options, { set: false });
+
+      if(firstSync){
+        options = _.extend({ fullSync: true });
+      }
+
+      return this.syncLocal('read', this, options)
         .then(function (response) {
-          if(options.remote === false) { return response; }
-          if(_.size(response) === 0 && (isNew || collection._delayed !== 0)) {
+          if(_.size(response) === 0 && firstSync) {
             return collection.fetchRemote(options);
           }
           return collection.fetchReadDelayed(response);
         })
         .then(function(response){
-          if(isNew && options.fullSync !== false) { collection.fullSync(); }
+          if(_.get(options, 'fullSync')) {
+            collection.fullSync();
+          }
           return response;
         });
     },
@@ -110,14 +108,13 @@ module.exports = function (parent){
      */
     fetchRemote: function (options) {
       var collection = this;
-      _.extend(options, { remote: true, set: false });
+      _.extend(options, { set: false });
 
-      return this.sync('read', this, options)
+      return this.syncRemote('read', this, options)
         .then(function (response) {
           response = collection.parse(response, options);
           options.index = options.index || 'id';
-          _.extend(options, { remote: false });
-          return collection.save(response, options);
+          return collection.saveLocal(response, options);
         });
     },
 
@@ -163,22 +160,15 @@ module.exports = function (parent){
         data     : { filter: { limit: 1, order: 'DESC' } },
         fullSync : false
       })
-        .then(function (response) {
-          var last_update = _.get(response, [0, 'updated_at']);
-          return collection.fetchRemoteIds(last_update, options);
-        });
+      .then(function (response) {
+        var last_update = _.get(response, [0, 'updated_at']);
+        return collection.fetchRemoteIds(last_update, options);
+      });
     },
 
-    // fullSync: function(options){
-    //   options = options || {};
-    //   var collection = this;
-    //   return this.fetchRemoteIds(null, options)
-    //     .then(function(response){
-    //       collection._parseFetchOptions(options);
-    //       collection.trigger('sync', collection, response, options);
-    //     });
-    // },
-
+    /**
+     *
+     */
     fullSync: function(options){
       var collection = this;
       return this.fetchRemoteIds(null, options)
@@ -194,6 +184,9 @@ module.exports = function (parent){
         });
     },
 
+    /**
+     *
+     */
     fetchReadDelayed: function(response){
       var delayed = this.getDelayed('read', response);
       if(!_.isEmpty(delayed)){
@@ -210,27 +203,47 @@ module.exports = function (parent){
       return response;
     },
 
+    /**
+     *
+     */
+    saveLocal: function(models, options){
+      _.extend(options, {remote: false});
+      return IDBCollection.prototype.save.call(this, models, options);
+    },
+
+    /**
+     *
+     */
     getDelayed: function(state, collection){
       var _state = this.states[state];
       collection = collection || this;
       return _.filter(collection, {_state: _state});
     },
 
-    _parseFetchOptions: function(options){
+    /**
+     *
+     */
+    toJSON: function (options) {
       options = options || {};
-      if(options.idb){
-        this._total = options.idb.total;
-        this._delayed = options.idb.delayed;
+      var json = IDBCollection.prototype.toJSON.apply(this, arguments);
+      if (options.remote && this.name) {
+        var nested = {};
+        nested[this.name] = json;
+        return nested;
       }
-      if(options.xhr){
-        this._total = parseInt( options.xhr.getResponseHeader('X-WC-Total'), 10 );
-      }
+      return json;
     },
 
-    hasNextPage: function(){
-      return this.length < this._total;
+    /**
+     *
+     */
+    parse: function (resp, options) {
+      options = options || {};
+      if (options.remote) {
+        resp = resp && resp[this.name] ? resp[this.name] : resp;
+      }
+      return IDBCollection.prototype.parse.call(this, resp, options);
     }
-
   });
 
   return DualCollection;

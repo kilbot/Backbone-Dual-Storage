@@ -201,7 +201,7 @@ describe('Dual Collections', function () {
       ]
     });
     var server = this.server;
-    server.respondWith('GET', /^\/test\?.*$/, [200, {"Content-Type": "application/json"},
+    server.respondWith('GET', '/test', [200, {"Content-Type": "application/json"},
       response
     ]);
 
