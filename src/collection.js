@@ -84,7 +84,7 @@ module.exports = function (parent){
       _.extend(options, { set: false });
 
       if(firstSync){
-        options = _.extend({ fullSync: true });
+        _.extend(options, { fullSync: true });
       }
 
       return this.syncLocal('read', this, options)
