@@ -80,8 +80,8 @@ var app =
 	});
 
 	var modelSubClasses = {
-	  dual: __webpack_require__(10),
-	  idb: __webpack_require__(11)
+	  dual: __webpack_require__(12),
+	  idb: __webpack_require__(10)
 	};
 
 	var Model = bb.Model.extend({
@@ -186,8 +186,6 @@ var app =
 	      {name: '_state', keyPath: '_state'}
 	    ],
 
-	    pageSize: 10,
-
 	    // delayed states
 	    states: {
 	      //'patch'  : 'UPDATE_FAILED',
@@ -201,48 +199,43 @@ var app =
 	      return this.wc_api + this.name;
 	    },
 
-	    sync: function(method, collection, options){
+	    /**
+	     *
+	     */
+	    sync: function(method, model, options){
 	      if(_.get(options, 'remote')) {
-	        return parent.prototype.sync.apply(this, arguments);
+	        return this.syncRemote(method, model, options);
 	      }
-	      return IDBCollection.prototype.sync.apply(this, arguments);
+	      return this.syncLocal(method, model, options);
 	    },
 
-	    toJSON: function (options) {
-	      options = options || {};
-	      var json = IDBCollection.prototype.toJSON.apply(this, arguments);
-	      if (options.remote && this.name) {
-	        var nested = {};
-	        nested[this.name] = json;
-	        return nested;
-	      }
-	      return json;
+	    /**
+	     *
+	     */
+	    syncLocal: function(method, model, options){
+	      _.extend(options, { remote: false });
+	      return IDBCollection.prototype.sync.call(this, method, model, options);
 	    },
 
-	    parse: function (resp, options) {
-	      options = options || {};
-	      if (options.remote) {
-	        resp = resp && resp[this.name] ? resp[this.name] : resp;
-	      }
-	      return IDBCollection.prototype.parse.call(this, resp, options);
+	    /**
+	     *
+	     */
+	    syncRemote: function(method, model, options){
+	      _.extend(options, { remote: true });
+	      return parent.prototype.sync.call(this, method, model, options);
 	    },
 
-	    /* jshint -W071, -W074 */
+	    /**
+	     *
+	     */
 	    fetch: function (options) {
-	      options = _.extend({parse: true}, options);
 	      var collection = this, success = options.success;
-	      var _fetch = options.remote ? this.fetchRemote : this.fetchLocal;
-	      options.success = undefined;
+	      options = _.extend({parse: true}, options, {success: undefined});
+	      var fetch = _.get(options, 'remote') ? this.fetchRemote(options) : this.fetchLocal(options);
 
-	      if(this.pageSize){
-	        var limit = _.get(options, ['data', 'filter', 'limit']);
-	        if(!limit) { _.set(options, 'data.filter.limit', this.pageSize); }
-	      }
-
-	      return _fetch.call(this, options)
+	      fetch
 	        .then(function (response) {
 	          var method = options.reset ? 'reset' : 'set';
-	          collection._parseFetchOptions(options);
 	          collection[method](response, options);
 	          if (success) {
 	            success.call(options.context, collection, response, options);
@@ -251,24 +244,29 @@ var app =
 	          return response;
 	        });
 	    },
-	    /* jshint +W071, +W074 */
 
 	    /**
 	     *
 	     */
 	    fetchLocal: function (options) {
-	      var collection = this, isNew = this.isNew();
-	      _.extend(options, {set: false});
-	      return this.sync('read', this, options)
+	      var collection = this, firstSync = this.isNew();
+	      _.extend(options, { set: false });
+
+	      if(firstSync){
+	        options = _.extend({ fullSync: true });
+	      }
+
+	      return this.syncLocal('read', this, options)
 	        .then(function (response) {
-	          if(options.remote === false) { return response; }
-	          if(_.size(response) === 0 && (isNew || collection._delayed !== 0)) {
+	          if(_.size(response) === 0 && firstSync) {
 	            return collection.fetchRemote(options);
 	          }
 	          return collection.fetchReadDelayed(response);
 	        })
 	        .then(function(response){
-	          if(isNew && options.fullSync !== false) { collection.fullSync(); }
+	          if(_.get(options, 'fullSync')) {
+	            collection.fullSync();
+	          }
 	          return response;
 	        });
 	    },
@@ -279,14 +277,13 @@ var app =
 	     */
 	    fetchRemote: function (options) {
 	      var collection = this;
-	      _.extend(options, { remote: true, set: false });
+	      _.extend(options, { set: false });
 
-	      return this.sync('read', this, options)
+	      return this.syncRemote('read', this, options)
 	        .then(function (response) {
 	          response = collection.parse(response, options);
 	          options.index = options.index || 'id';
-	          _.extend(options, { remote: false });
-	          return collection.save(response, options);
+	          return collection.saveLocal(response, options);
 	        });
 	    },
 
@@ -332,22 +329,15 @@ var app =
 	        data     : { filter: { limit: 1, order: 'DESC' } },
 	        fullSync : false
 	      })
-	        .then(function (response) {
-	          var last_update = _.get(response, [0, 'updated_at']);
-	          return collection.fetchRemoteIds(last_update, options);
-	        });
+	      .then(function (response) {
+	        var last_update = _.get(response, [0, 'updated_at']);
+	        return collection.fetchRemoteIds(last_update, options);
+	      });
 	    },
 
-	    // fullSync: function(options){
-	    //   options = options || {};
-	    //   var collection = this;
-	    //   return this.fetchRemoteIds(null, options)
-	    //     .then(function(response){
-	    //       collection._parseFetchOptions(options);
-	    //       collection.trigger('sync', collection, response, options);
-	    //     });
-	    // },
-
+	    /**
+	     *
+	     */
 	    fullSync: function(options){
 	      var collection = this;
 	      return this.fetchRemoteIds(null, options)
@@ -363,6 +353,9 @@ var app =
 	        });
 	    },
 
+	    /**
+	     *
+	     */
 	    fetchReadDelayed: function(response){
 	      var delayed = this.getDelayed('read', response);
 	      if(!_.isEmpty(delayed)){
@@ -379,27 +372,47 @@ var app =
 	      return response;
 	    },
 
+	    /**
+	     *
+	     */
+	    saveLocal: function(models, options){
+	      _.extend(options, {remote: false});
+	      return IDBCollection.prototype.save.call(this, models, options);
+	    },
+
+	    /**
+	     *
+	     */
 	    getDelayed: function(state, collection){
 	      var _state = this.states[state];
 	      collection = collection || this;
 	      return _.filter(collection, {_state: _state});
 	    },
 
-	    _parseFetchOptions: function(options){
+	    /**
+	     *
+	     */
+	    toJSON: function (options) {
 	      options = options || {};
-	      if(options.idb){
-	        this._total = options.idb.total;
-	        this._delayed = options.idb.delayed;
+	      var json = IDBCollection.prototype.toJSON.apply(this, arguments);
+	      if (options.remote && this.name) {
+	        var nested = {};
+	        nested[this.name] = json;
+	        return nested;
 	      }
-	      if(options.xhr){
-	        this._total = parseInt( options.xhr.getResponseHeader('X-WC-Total'), 10 );
-	      }
+	      return json;
 	    },
 
-	    hasNextPage: function(){
-	      return this.length < this._total;
+	    /**
+	     *
+	     */
+	    parse: function (resp, options) {
+	      options = options || {};
+	      if (options.remote) {
+	        resp = resp && resp[this.name] ? resp[this.name] : resp;
+	      }
+	      return IDBCollection.prototype.parse.call(this, resp, options);
 	    }
-
 	  });
 
 	  return DualCollection;
@@ -411,12 +424,19 @@ var app =
 
 	var bb = __webpack_require__(1);
 	var _ = __webpack_require__(3);
-	var IDBAdapter = __webpack_require__(6);
-	var sync = __webpack_require__(9);
+	var Radio = __webpack_require__(6);
+	var IDBAdapter = __webpack_require__(7);
+	var IDBModel = __webpack_require__(10);
+	var sync = __webpack_require__(11);
 
 	module.exports = function (parent){
 
 	  var IDBCollection = parent.extend({
+
+	    model: IDBModel,
+
+	    name       : 'store',
+	    storePrefix: 'wc_pos_',
 
 	    constructor: function(){
 	      parent.apply(this, arguments);
@@ -455,7 +475,7 @@ var app =
 	        collection.trigger('sync', collection, resp, options);
 	      };
 
-	      return this.sync('update', this, _.extend(options, {attrsArray: attrsArray}));
+	      return sync('update', this, _.extend(options, {attrsArray: attrsArray}));
 	    },
 
 	    /**
@@ -464,6 +484,7 @@ var app =
 	    destroy: function(models, options){
 	      if(!options && models && !_.isArray(models)){
 	        options = models;
+	        models = undefined;
 	      } else {
 	        options = options || {};
 	      }
@@ -472,35 +493,37 @@ var app =
 	        wait = options.wait,
 	        success = options.success;
 
-	      options.attrsArray = _.map(models, function(model){
-	        return model instanceof bb.Model ? model.toJSON() : model;
-	      });
+	      if(models){
+	        options.attrsArray = _.map(models, function(model){
+	          return model instanceof bb.Model ? model.toJSON() : model;
+	        });
+	      }
 
 	      if(options.data){
 	        wait = true;
 	      }
 
 	      options.success = function(resp) {
-	        if(wait && _.isEmpty(options.attrsArray) ) {
-	          collection.resetNew();
+	        if(wait && !options.attrsArray) {
+	          collection.isNew(true);
 	          collection.reset();
 	        }
-	        if(wait && !_.isEmpty(options.attrsArray)) {
+	        if(wait && options.attrsArray) {
 	          collection.remove(options.attrsArray);
 	        }
 	        if (success) { success.call(options.context, collection, resp, options); }
 	        collection.trigger('sync', collection, resp, options);
 	      };
 
-	      if(!wait && _.isEmpty(options.attrsArray) ) {
+	      if(!wait && !options.attrsArray) {
 	        collection.reset();
 	      }
 
-	      if(!wait && !_.isEmpty(options.attrsArray)) {
+	      if(!wait && options.attrsArray) {
 	        collection.remove(options.attrsArray);
 	      }
 
-	      return this.sync('delete', this, options);
+	      return sync('delete', this, options);
 	    },
 	    /* jshint +W071, +W074 */
 
@@ -526,6 +549,35 @@ var app =
 	      return this.filter(function (model) {
 	        return model.isNew() || model.hasChanged();
 	      });
+	    },
+
+	    /**
+	     * Each website will have a unique idbVersion number
+	     * the version number is incremented on plugin update and some user actions
+	     * this version check will compare the version numbers
+	     * idb is flushed on version change
+	     */
+	    versionCheck: function () {
+	      var name = this.name;
+
+	      var newVersion = parseInt(Radio.request('entities', 'get', {
+	          type: 'option',
+	          name: 'idbVersion'
+	        }), 10) || 0;
+	      var oldVersion = parseInt(Radio.request('entities', 'get', {
+	          type: 'localStorage',
+	          name: name + '_idbVersion'
+	        }), 10) || 0;
+
+	      if (newVersion !== oldVersion) {
+	        this.destroy().then(function () {
+	          Radio.request('entities', 'set', {
+	            type: 'localStorage',
+	            name: name + '_idbVersion',
+	            data: newVersion
+	          });
+	        });
+	      }
 	    }
 
 	  });
@@ -538,9 +590,364 @@ var app =
 /* 6 */
 /***/ function(module, exports, __webpack_require__) {
 
+	// Backbone.Radio v2.0.0
+
+	(function (global, factory) {
+	   true ? module.exports = factory(__webpack_require__(3), __webpack_require__(1)) :
+	  typeof define === 'function' && define.amd ? define(['underscore', 'backbone'], factory) :
+	  (global.Backbone = global.Backbone || {}, global.Backbone.Radio = factory(global._,global.Backbone));
+	}(this, function (_,Backbone) { 'use strict';
+
+	  _ = 'default' in _ ? _['default'] : _;
+	  Backbone = 'default' in Backbone ? Backbone['default'] : Backbone;
+
+	  var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) {
+	    return typeof obj;
+	  } : function (obj) {
+	    return obj && typeof Symbol === "function" && obj.constructor === Symbol ? "symbol" : typeof obj;
+	  };
+
+	  var previousRadio = Backbone.Radio;
+
+	  var Radio = Backbone.Radio = {};
+
+	  Radio.VERSION = '2.0.0';
+
+	  // This allows you to run multiple instances of Radio on the same
+	  // webapp. After loading the new version, call `noConflict()` to
+	  // get a reference to it. At the same time the old version will be
+	  // returned to Backbone.Radio.
+	  Radio.noConflict = function () {
+	    Backbone.Radio = previousRadio;
+	    return this;
+	  };
+
+	  // Whether or not we're in DEBUG mode or not. DEBUG mode helps you
+	  // get around the issues of lack of warnings when events are mis-typed.
+	  Radio.DEBUG = false;
+
+	  // Format debug text.
+	  Radio._debugText = function (warning, eventName, channelName) {
+	    return warning + (channelName ? ' on the ' + channelName + ' channel' : '') + ': "' + eventName + '"';
+	  };
+
+	  // This is the method that's called when an unregistered event was called.
+	  // By default, it logs warning to the console. By overriding this you could
+	  // make it throw an Error, for instance. This would make firing a nonexistent event
+	  // have the same consequence as firing a nonexistent method on an Object.
+	  Radio.debugLog = function (warning, eventName, channelName) {
+	    if (Radio.DEBUG && console && console.warn) {
+	      console.warn(Radio._debugText(warning, eventName, channelName));
+	    }
+	  };
+
+	  var eventSplitter = /\s+/;
+
+	  // An internal method used to handle Radio's method overloading for Requests.
+	  // It's borrowed from Backbone.Events. It differs from Backbone's overload
+	  // API (which is used in Backbone.Events) in that it doesn't support space-separated
+	  // event names.
+	  Radio._eventsApi = function (obj, action, name, rest) {
+	    if (!name) {
+	      return false;
+	    }
+
+	    var results = {};
+
+	    // Handle event maps.
+	    if ((typeof name === 'undefined' ? 'undefined' : _typeof(name)) === 'object') {
+	      for (var key in name) {
+	        var result = obj[action].apply(obj, [key, name[key]].concat(rest));
+	        eventSplitter.test(key) ? _.extend(results, result) : results[key] = result;
+	      }
+	      return results;
+	    }
+
+	    // Handle space separated event names.
+	    if (eventSplitter.test(name)) {
+	      var names = name.split(eventSplitter);
+	      for (var i = 0, l = names.length; i < l; i++) {
+	        results[names[i]] = obj[action].apply(obj, [names[i]].concat(rest));
+	      }
+	      return results;
+	    }
+
+	    return false;
+	  };
+
+	  // An optimized way to execute callbacks.
+	  Radio._callHandler = function (callback, context, args) {
+	    var a1 = args[0],
+	        a2 = args[1],
+	        a3 = args[2];
+	    switch (args.length) {
+	      case 0:
+	        return callback.call(context);
+	      case 1:
+	        return callback.call(context, a1);
+	      case 2:
+	        return callback.call(context, a1, a2);
+	      case 3:
+	        return callback.call(context, a1, a2, a3);
+	      default:
+	        return callback.apply(context, args);
+	    }
+	  };
+
+	  // A helper used by `off` methods to the handler from the store
+	  function removeHandler(store, name, callback, context) {
+	    var event = store[name];
+	    if ((!callback || callback === event.callback || callback === event.callback._callback) && (!context || context === event.context)) {
+	      delete store[name];
+	      return true;
+	    }
+	  }
+
+	  function removeHandlers(store, name, callback, context) {
+	    store || (store = {});
+	    var names = name ? [name] : _.keys(store);
+	    var matched = false;
+
+	    for (var i = 0, length = names.length; i < length; i++) {
+	      name = names[i];
+
+	      // If there's no event by this name, log it and continue
+	      // with the loop
+	      if (!store[name]) {
+	        continue;
+	      }
+
+	      if (removeHandler(store, name, callback, context)) {
+	        matched = true;
+	      }
+	    }
+
+	    return matched;
+	  }
+
+	  /*
+	   * tune-in
+	   * -------
+	   * Get console logs of a channel's activity
+	   *
+	   */
+
+	  var _logs = {};
+
+	  // This is to produce an identical function in both tuneIn and tuneOut,
+	  // so that Backbone.Events unregisters it.
+	  function _partial(channelName) {
+	    return _logs[channelName] || (_logs[channelName] = _.bind(Radio.log, Radio, channelName));
+	  }
+
+	  _.extend(Radio, {
+
+	    // Log information about the channel and event
+	    log: function log(channelName, eventName) {
+	      if (typeof console === 'undefined') {
+	        return;
+	      }
+	      var args = _.toArray(arguments).slice(2);
+	      console.log('[' + channelName + '] "' + eventName + '"', args);
+	    },
+
+	    // Logs all events on this channel to the console. It sets an
+	    // internal value on the channel telling it we're listening,
+	    // then sets a listener on the Backbone.Events
+	    tuneIn: function tuneIn(channelName) {
+	      var channel = Radio.channel(channelName);
+	      channel._tunedIn = true;
+	      channel.on('all', _partial(channelName));
+	      return this;
+	    },
+
+	    // Stop logging all of the activities on this channel to the console
+	    tuneOut: function tuneOut(channelName) {
+	      var channel = Radio.channel(channelName);
+	      channel._tunedIn = false;
+	      channel.off('all', _partial(channelName));
+	      delete _logs[channelName];
+	      return this;
+	    }
+	  });
+
+	  /*
+	   * Backbone.Radio.Requests
+	   * -----------------------
+	   * A messaging system for requesting data.
+	   *
+	   */
+
+	  function makeCallback(callback) {
+	    return _.isFunction(callback) ? callback : function () {
+	      return callback;
+	    };
+	  }
+
+	  Radio.Requests = {
+
+	    // Make a request
+	    request: function request(name) {
+	      var args = _.toArray(arguments).slice(1);
+	      var results = Radio._eventsApi(this, 'request', name, args);
+	      if (results) {
+	        return results;
+	      }
+	      var channelName = this.channelName;
+	      var requests = this._requests;
+
+	      // Check if we should log the request, and if so, do it
+	      if (channelName && this._tunedIn) {
+	        Radio.log.apply(this, [channelName, name].concat(args));
+	      }
+
+	      // If the request isn't handled, log it in DEBUG mode and exit
+	      if (requests && (requests[name] || requests['default'])) {
+	        var handler = requests[name] || requests['default'];
+	        args = requests[name] ? args : arguments;
+	        return Radio._callHandler(handler.callback, handler.context, args);
+	      } else {
+	        Radio.debugLog('An unhandled request was fired', name, channelName);
+	      }
+	    },
+
+	    // Set up a handler for a request
+	    reply: function reply(name, callback, context) {
+	      if (Radio._eventsApi(this, 'reply', name, [callback, context])) {
+	        return this;
+	      }
+
+	      this._requests || (this._requests = {});
+
+	      if (this._requests[name]) {
+	        Radio.debugLog('A request was overwritten', name, this.channelName);
+	      }
+
+	      this._requests[name] = {
+	        callback: makeCallback(callback),
+	        context: context || this
+	      };
+
+	      return this;
+	    },
+
+	    // Set up a handler that can only be requested once
+	    replyOnce: function replyOnce(name, callback, context) {
+	      if (Radio._eventsApi(this, 'replyOnce', name, [callback, context])) {
+	        return this;
+	      }
+
+	      var self = this;
+
+	      var once = _.once(function () {
+	        self.stopReplying(name);
+	        return makeCallback(callback).apply(this, arguments);
+	      });
+
+	      return this.reply(name, once, context);
+	    },
+
+	    // Remove handler(s)
+	    stopReplying: function stopReplying(name, callback, context) {
+	      if (Radio._eventsApi(this, 'stopReplying', name)) {
+	        return this;
+	      }
+
+	      // Remove everything if there are no arguments passed
+	      if (!name && !callback && !context) {
+	        delete this._requests;
+	      } else if (!removeHandlers(this._requests, name, callback, context)) {
+	        Radio.debugLog('Attempted to remove the unregistered request', name, this.channelName);
+	      }
+
+	      return this;
+	    }
+	  };
+
+	  /*
+	   * Backbone.Radio.channel
+	   * ----------------------
+	   * Get a reference to a channel by name.
+	   *
+	   */
+
+	  Radio._channels = {};
+
+	  Radio.channel = function (channelName) {
+	    if (!channelName) {
+	      throw new Error('You must provide a name for the channel.');
+	    }
+
+	    if (Radio._channels[channelName]) {
+	      return Radio._channels[channelName];
+	    } else {
+	      return Radio._channels[channelName] = new Radio.Channel(channelName);
+	    }
+	  };
+
+	  /*
+	   * Backbone.Radio.Channel
+	   * ----------------------
+	   * A Channel is an object that extends from Backbone.Events,
+	   * and Radio.Requests.
+	   *
+	   */
+
+	  Radio.Channel = function (channelName) {
+	    this.channelName = channelName;
+	  };
+
+	  _.extend(Radio.Channel.prototype, Backbone.Events, Radio.Requests, {
+
+	    // Remove all handlers from the messaging systems of this channel
+	    reset: function reset() {
+	      this.off();
+	      this.stopListening();
+	      this.stopReplying();
+	      return this;
+	    }
+	  });
+
+	  /*
+	   * Top-level API
+	   * -------------
+	   * Supplies the 'top-level API' for working with Channels directly
+	   * from Backbone.Radio.
+	   *
+	   */
+
+	  var channel;
+	  var args;
+	  var systems = [Backbone.Events, Radio.Requests];
+	  _.each(systems, function (system) {
+	    _.each(system, function (method, methodName) {
+	      Radio[methodName] = function (channelName) {
+	        args = _.toArray(arguments).slice(1);
+	        channel = this.channel(channelName);
+	        return channel[methodName].apply(channel, args);
+	      };
+	    });
+	  });
+
+	  Radio.reset = function (channelName) {
+	    var channels = !channelName ? this._channels : [this._channels[channelName]];
+	    _.each(channels, function (channel) {
+	      channel.reset();
+	    });
+	  };
+
+	  return Radio;
+
+	}));
+	//# sourceMappingURL=./backbone.radio.js.map
+
+/***/ },
+/* 7 */
+/***/ function(module, exports, __webpack_require__) {
+
 	/* jshint -W071, -W074 */
 	var _ = __webpack_require__(3);
-	var matchMaker = __webpack_require__(7);
+	var matchMaker = __webpack_require__(8);
 
 	var is_safari = window.navigator.userAgent.indexOf('Safari') !== -1 &&
 	  window.navigator.userAgent.indexOf('Chrome') === -1 &&
@@ -740,8 +1147,8 @@ var app =
 	  get: function (key, options) {
 	    options = options || {};
 	    var objectStore = options.objectStore || this.getObjectStore(consts.READ_ONLY),
-	        keyPath     = options.index || this.opts.keyPath,
-	        self        = this;
+	      keyPath     = options.index || this.opts.keyPath,
+	      self        = this;
 
 	    if (_.isObject(keyPath)) {
 	      keyPath = keyPath.keyPath;
@@ -765,8 +1172,8 @@ var app =
 	  remove: function (key, options) {
 	    options = options || {};
 	    var objectStore = options.objectStore || this.getObjectStore(consts.READ_WRITE),
-	        keyPath     = options.index || this.opts.keyPath,
-	        self        = this;
+	      keyPath     = options.index || this.opts.keyPath,
+	      self        = this;
 
 	    if(_.isObject(key)){
 	      key = key[keyPath];
@@ -785,7 +1192,7 @@ var app =
 	        err.code = event.target.errorCode;
 	        reject(err);
 	      };
-	      
+
 	      request.onerror = function (event) {
 	        options._error = {event: event, message: 'delete error', callback: reject};
 	        self.opts.onerror(options);
@@ -837,18 +1244,18 @@ var app =
 	    options = options || {};
 
 	    var objectStore = options.objectStore || this.getObjectStore(consts.READ_ONLY),
-	        include     = _.isArray(keyArray) ? keyArray : _.get(options, ['data', 'filter', 'in']),
-	        exclude     = _.get(options, ['data', 'filter', 'not_in']),
-	        limit       = _.get(options, ['data', 'filter', 'limit'], -1),
-	        start       = _.get(options, ['data', 'filter', 'offset'], 0),
-	        order       = _.get(options, ['data', 'filter', 'order'], 'ASC'),
-	        direction   = order === 'DESC' ? consts.PREV : consts.NEXT,
-	        query       = _.get(options, ['data', 'filter', 'q']),
-	        keyPath     = options.index || this.opts.keyPath,
-	        page        = _.get(options, ['data', 'page']),
-	        self        = this,
-	        range       = null,
-	        end;
+	      include     = _.isArray(keyArray) ? keyArray : _.get(options, ['data', 'filter', 'in']),
+	      exclude     = _.get(options, ['data', 'filter', 'not_in']),
+	      limit       = _.get(options, ['data', 'filter', 'limit'], -1),
+	      start       = _.get(options, ['data', 'filter', 'offset'], 0),
+	      order       = _.get(options, ['data', 'filter', 'order'], 'ASC'),
+	      direction   = order === 'DESC' ? consts.PREV : consts.NEXT,
+	      query       = _.get(options, ['data', 'filter', 'q']),
+	      keyPath     = options.index || this.opts.keyPath,
+	      page        = _.get(options, ['data', 'page']),
+	      self        = this,
+	      range       = null,
+	      end;
 
 	    if (_.isObject(keyPath)) {
 	      if(keyPath.value){
@@ -909,7 +1316,9 @@ var app =
 	      return this.getBatch(null, options)
 	        .then(function(response){
 	          options.attrsArray = _.map(response, self.opts.keyPath);
-	          return self.removeBatch(options.attrsArray);
+	          if(!_.isEmpty(options.attrsArray)){
+	            return self.removeBatch(options.attrsArray);
+	          }
 	        });
 	    }
 
@@ -950,11 +1359,11 @@ var app =
 	/* jshint +W071, +W074 */
 
 /***/ },
-/* 7 */
+/* 8 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
-	var match = __webpack_require__(8);
+	var match = __webpack_require__(9);
 
 	var defaults = {
 	  fields: ['title'] // json property to use for simple string search
@@ -1035,7 +1444,7 @@ var app =
 	};
 
 /***/ },
-/* 8 */
+/* 9 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
@@ -1089,7 +1498,23 @@ var app =
 	};
 
 /***/ },
-/* 9 */
+/* 10 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var sync = __webpack_require__(11);
+
+	module.exports = function (parent){
+
+	  var IDBModel = parent.extend({
+	    sync: sync
+	  });
+
+	  return IDBModel;
+
+	};
+
+/***/ },
+/* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var bb = __webpack_require__(1);
@@ -1098,9 +1523,9 @@ var app =
 	module.exports = function(method, entity, options) {
 	  options = options || {};
 	  var isModel = entity instanceof bb.Model,
-	      data = options.attrsArray,
-	      db = entity.db,
-	      key;
+	    data = options.attrsArray,
+	    db = entity.db,
+	    key;
 
 	  if(isModel){
 	    db = entity.collection.db;
@@ -1124,16 +1549,20 @@ var app =
 	    .then(function (resp) {
 	      if (options.success) { options.success(resp); }
 	      return resp;
-	    })
-	    .catch(function (resp) {
-	      if (options.error) { options.error(resp); }
 	    });
+
+	  /**
+	   * Catch handled by sync config
+	   */
+	  // .catch(function (resp) {
+	  //   if (options.error) { options.error(resp); }
+	  // });
 
 	};
 	/* jshint +W074 */
 
 /***/ },
-/* 10 */
+/* 12 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
@@ -1151,11 +1580,6 @@ var app =
 
 	    remoteIdAttribute: 'id',
 
-	    isDelayed: function(state){
-	      state = state || this.get('_state');
-	      return _.includes(this.collection.states, state);
-	    },
-
 	    url: function(){
 	      var remoteId = this.get(this.remoteIdAttribute),
 	        urlRoot = _.result(this.collection, 'url');
@@ -1166,11 +1590,30 @@ var app =
 	      return urlRoot;
 	    },
 
+	    isDelayed: function(state){
+	      state = state || this.get('_state');
+	      return _.includes(this.collection.states, state);
+	    },
+
+	    hasRemoteId: function () {
+	      return !!this.get(this.remoteIdAttribute);
+	    },
+
 	    sync: function(method, model, options){
 	      if(_.get(options, 'remote')) {
-	        return parent.prototype.sync.apply(this, arguments);
+	        return this.syncRemote(method, model, options);
 	      }
-	      return IDBModel.prototype.sync.apply(this, arguments);
+	      return this.syncLocal(method, model, options);
+	    },
+
+	    syncLocal: function(method, model, options){
+	      _.extend(options, { remote: false });
+	      return IDBModel.prototype.sync.call(this, method, model, options);
+	    },
+
+	    syncRemote: function(method, model, options){
+	      _.extend(options, { remote: true });
+	      return parent.prototype.sync.call(this, method, model, options);
 	    },
 
 	    /* jshint -W071, -W074, -W116 */
@@ -1187,30 +1630,38 @@ var app =
 	      var method = this.hasRemoteId() ? 'update' : 'create';
 	      this.set({ _state: this.collection.states[method] });
 
-	      if(!options.remote){
-	        return IDBModel.prototype.save.apply(this, arguments);
+	      if(_.get(options, 'remote')) {
+	        return this.saveRemote(attrs, options);
 	      }
+	      return this.saveLocal(attrs, options);
+	    },
+	    /* jshint +W071, +W074, +W116 */
 
-	      var model = this, success = options.success, local_id;
-	      _.extend(options, { success: undefined, remote: false });
+	    saveLocal: function(attrs, options){
+	      _.extend(options, { remote: false });
+	      return IDBModel.prototype.save.call(this, attrs, options);
+	    },
+
+	    saveRemote: function(attrs, options){
+	      var method = this.hasRemoteId() ? 'update' : 'create';
+	      var model = this, success = options.success;
+	      _.extend(options, { success: undefined });
+
 	      if (options.patch && !options.attrs) {
 	        options.attrs = this.prepareRemoteJSON(attrs);
 	      }
 
-	      return this.sync(method, this, options)
-	        .then(function(resp){
-	          local_id = resp.local_id;
-	          _.extend(options, { remote: true });
-	          return model.sync(method, model, options);
+	      return model.syncLocal(method, model, options)
+	        .then(function(){
+	          return model.syncRemote(method, model, options);
 	        })
 	        .then(function(resp){
 	          resp = model.parse(resp, options);
-	          model.set({ _state: undefined });
-	          _.extend(options, { remote: false, success: success });
-	          return IDBModel.prototype.save.call(model, resp, options);
+	          resp._state = undefined;
+	          _.extend(options, { success: success });
+	          return model.saveLocal(resp, options);
 	        });
 	    },
-	    /* jshint +W071, +W074, +W116 */
 
 	    fetch: function(options){
 	      options = _.extend({parse: true}, options);
@@ -1227,10 +1678,6 @@ var app =
 	          _.extend(options, { remote: false });
 	          return IDBModel.prototype.save.call(model, resp, options);
 	        });
-	    },
-
-	    hasRemoteId: function () {
-	      return !!this.get(this.remoteIdAttribute);
 	    },
 
 	    toJSON: function (options) {
@@ -1262,22 +1709,6 @@ var app =
 	  });
 
 	  return DualModel;
-
-	};
-
-/***/ },
-/* 11 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var sync = __webpack_require__(9);
-
-	module.exports = function (parent){
-
-	  var IDBModel = parent.extend({
-	    sync: sync
-	  });
-
-	  return IDBModel;
 
 	};
 
