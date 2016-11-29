@@ -204,25 +204,9 @@ var app =
 	     */
 	    sync: function(method, model, options){
 	      if(_.get(options, 'remote')) {
-	        return this.syncRemote(method, model, options);
+	        return parent.prototype.sync.call(this, method, model, options);
 	      }
-	      return this.syncLocal(method, model, options);
-	    },
-
-	    /**
-	     *
-	     */
-	    syncLocal: function(method, model, options){
-	      _.extend(options, { remote: false });
 	      return IDBCollection.prototype.sync.call(this, method, model, options);
-	    },
-
-	    /**
-	     *
-	     */
-	    syncRemote: function(method, model, options){
-	      _.extend(options, { remote: true });
-	      return parent.prototype.sync.call(this, method, model, options);
 	    },
 
 	    /**
@@ -253,9 +237,9 @@ var app =
 	          firstSync = this.isNew(),
 	          fullSync = _.get(options, 'fullSync', firstSync);
 
-	      _.extend(options, { set: false });
+	      _.extend(options, { set: false, remote: false });
 
-	      return this.syncLocal('read', this, options)
+	      return this.sync('read', this, options)
 	        .then(function (response) {
 	          if(_.size(response) === 0 && firstSync && fullSync) {
 	            return collection.fetchRemote(options);
@@ -276,9 +260,9 @@ var app =
 	     */
 	    fetchRemote: function (options) {
 	      var collection = this;
-	      _.extend(options, { set: false });
+	      _.extend(options, { set: false, remote: true });
 
-	      return this.syncRemote('read', this, options)
+	      return this.sync('read', this, options)
 	        .then(function (response) {
 	          response = collection.parse(response, options);
 	          options.index = options.index || 'id';
