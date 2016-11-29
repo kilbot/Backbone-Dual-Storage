@@ -464,6 +464,61 @@ describe('Dual Collections', function () {
 
   });
 
+  it('should automatically do a full sync on first fetch', function(done){
+
+    var server = this.server;
+
+    // first server response
+    server.respondWith('GET', '/test', [200, {"Content-Type": "application/json"},
+      JSON.stringify([ {id: 1, foo: 'bar'}, {id: 2, foo: 'baz'} ])
+    ]);
+
+    //  // mock server response
+    server.respondWith('GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
+      JSON.stringify([ { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 } ])
+    ]);
+
+
+    var collection = new DualCollection();
+    collection.url = '/test';
+
+    collection.fetch()
+      .then(function(response){
+        expect(response).to.have.length(2);
+        expect(collection).to.have.length(2);
+
+        // full id sync happens in background
+        collection.on('sync', function(){
+          collection.db.count()
+            .then(function(count){
+              expect(count).equals(4);
+              done();
+            })
+            .catch(done);
+        });
+
+      })
+      .catch(done);
+
+  });
+
+  it('should disable full sync on first sync with { fullSync: false }', function(done){
+
+    var server = this.server;
+
+    var collection = new DualCollection();
+
+    collection.fetch({ fullSync: false })
+      .then(function(response){
+        expect(response).to.have.length(0);
+        expect(collection).to.have.length(0);
+        expect(server.requests).to.have.length(0);
+        done();
+      })
+      .catch(done);
+
+  });
+
   //
   //it('should remove garbage', function( done ){
   //

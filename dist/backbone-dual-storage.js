@@ -229,11 +229,11 @@ var app =
 	     *
 	     */
 	    fetch: function (options) {
-	      var collection = this, success = options.success;
+	      var collection = this, success = _.get(options, 'success');
 	      options = _.extend({parse: true}, options, {success: undefined});
-	      var fetch = _.get(options, 'remote') ? this.fetchRemote(options) : this.fetchLocal(options);
+	      var fetch = _.get(options, 'remote') ? this.fetchRemote : this.fetchLocal;
 
-	      fetch
+	      return fetch.call(this, options)
 	        .then(function (response) {
 	          var method = options.reset ? 'reset' : 'set';
 	          collection[method](response, options);
@@ -249,22 +249,21 @@ var app =
 	     *
 	     */
 	    fetchLocal: function (options) {
-	      var collection = this, firstSync = this.isNew();
-	      _.extend(options, { set: false });
+	      var collection = this,
+	          firstSync = this.isNew(),
+	          fullSync = _.get(options, 'fullSync', firstSync);
 
-	      if(firstSync){
-	        _.extend(options, { fullSync: true });
-	      }
+	      _.extend(options, { set: false });
 
 	      return this.syncLocal('read', this, options)
 	        .then(function (response) {
-	          if(_.size(response) === 0 && firstSync) {
+	          if(_.size(response) === 0 && firstSync && fullSync) {
 	            return collection.fetchRemote(options);
 	          }
 	          return collection.fetchReadDelayed(response);
 	        })
 	        .then(function(response){
-	          if(_.get(options, 'fullSync')) {
+	          if(fullSync) {
 	            collection.fullSync();
 	          }
 	          return response;
