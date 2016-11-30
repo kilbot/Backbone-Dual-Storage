@@ -52,6 +52,7 @@ module.exports = function (parent){
         .then(function (response) {
           var method = options.reset ? 'reset' : 'set';
           collection[method](response, options);
+          collection.setTotals(options);
           if (success) {
             success.call(options.context, collection, response, options);
           }
@@ -68,7 +69,7 @@ module.exports = function (parent){
           firstSync = this.isNew(),
           fullSync = _.get(options, 'fullSync', firstSync);
 
-      _.extend(options, { set: false, remote: false });
+      _.extend(options, { remote: false });
 
       return this.sync('read', this, options)
         .then(function (response) {
@@ -226,7 +227,22 @@ module.exports = function (parent){
         resp = resp && resp[this.name] ? resp[this.name] : resp;
       }
       return IDBCollection.prototype.parse.call(this, resp, options);
+    },
+
+    hasMore: function(){
+      return this.length < _.get(this.state, ['totals', 'idb', 'total']) &&
+        _.get(this.state, ['totals', 'idb', 'delayed']) === 0;
+    },
+
+    setTotals: function(options){
+      var idbTotals = _.get(options, 'idb');
+      _.set(this.state, ['totals', 'idb'], idbTotals);
+    },
+
+    getTotalRecords: function(){
+      return _.get(this.state, ['totals', 'idb', 'total'], 0);
     }
+
   });
 
   return DualCollection;
