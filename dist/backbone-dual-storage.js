@@ -242,10 +242,14 @@ var app =
 
 	      return this.sync('read', this, options)
 	        .then(function (response) {
-	          if(_.size(response) === 0 && firstSync && fullSync) {
+	          if(_.size(response) > 0){
+	            return collection.fetchReadDelayed(response);
+	          }
+	          // if first sync or there are read delayed records
+	          if(firstSync && fullSync || _.get(options, ['idb', 'delayed']) > 0){
 	            return collection.fetchRemote(options);
 	          }
-	          return collection.fetchReadDelayed(response);
+	          return response;
 	        })
 	        .then(function(response){
 	          if(fullSync) {
@@ -400,7 +404,8 @@ var app =
 
 	    hasMore: function(){
 	      return this.length < _.get(this.state, ['totals', 'idb', 'total']) &&
-	        _.get(this.state, ['totals', 'idb', 'delayed']) === 0;
+	        _.get(this.state, ['totals', 'idb', 'delayed']) === 0 ||
+	        _.get(this.state, ['totals', 'idb', 'delayed']) > 0;
 	    },
 
 	    setTotals: function(options){

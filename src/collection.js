@@ -73,10 +73,18 @@ module.exports = function (parent){
 
       return this.sync('read', this, options)
         .then(function (response) {
-          if(_.size(response) === 0 && firstSync && fullSync) {
+          if(_.size(response) > 0){
+            return collection.fetchReadDelayed(response);
+          }
+          // special case
+          if(_.get(options, ['idb', 'delayed']) > 0){
+            collection.set(response, options);
+          }
+          // if first sync or there are read delayed records
+          if(firstSync && fullSync || _.get(options, ['idb', 'delayed']) > 0){
             return collection.fetchRemote(options);
           }
-          return collection.fetchReadDelayed(response);
+          return response;
         })
         .then(function(response){
           if(fullSync) {
@@ -157,11 +165,11 @@ module.exports = function (parent){
       var collection = this;
       return this.fetchRemoteIds(null, options)
         .then(function(response){
-          return collection.destroy(null, {
+          return collection.destroyLocal(null, {
             index: 'id',
             data: {
               filter: {
-                not_in: _.map(response, 'id')
+                not_in: _.map(response, 'id').join(',')
               }
             }
           });
@@ -193,6 +201,14 @@ module.exports = function (parent){
     saveLocal: function(models, options){
       _.extend(options, {remote: false});
       return IDBCollection.prototype.save.call(this, models, options);
+    },
+
+    /**
+     *
+     */
+    destroyLocal: function(models, options){
+      _.extend(options, {remote: false});
+      return IDBCollection.prototype.destroy.call(this, models, options);
     },
 
     /**
@@ -230,13 +246,23 @@ module.exports = function (parent){
     },
 
     hasMore: function(){
-      return this.length < _.get(this.state, ['totals', 'idb', 'total']) &&
-        _.get(this.state, ['totals', 'idb', 'delayed']) === 0;
+      var localTotal   = _.get(this.state, ['totals', 'idb', 'total']);
+      var localDelayed = _.get(this.state, ['totals', 'idb', 'delayed']);
+      var remoteTotal  = _.get(this.state, ['totals', 'remote', 'total']);
+
+      return this.length < localTotal && localDelayed === 0 ||
+        localDelayed > 0 && remoteTotal !== 0;
     },
 
     setTotals: function(options){
-      var idbTotals = _.get(options, 'idb');
-      _.set(this.state, ['totals', 'idb'], idbTotals);
+      var totals = {};
+      totals.idb = _.get(options, 'idb');
+      if(_.has(options, 'xhr')){
+        totals.remote = {
+          total: parseInt( options.xhr.getResponseHeader('X-WC-Total') )
+        };
+      }
+      _.set(this.state, ['totals'], totals);
     },
 
     getTotalRecords: function(){
