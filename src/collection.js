@@ -47,6 +47,7 @@ module.exports = function (parent){
       var collection = this, success = _.get(options, 'success');
       options = _.extend({parse: true}, options, {success: undefined});
       var fetch = _.get(options, 'remote') ? this.fetchRemote : this.fetchLocal;
+      collection.trigger('request:dual', collection, fetch, options);
 
       return fetch.call(this, options)
         .then(function (response) {
@@ -56,7 +57,7 @@ module.exports = function (parent){
           if (success) {
             success.call(options.context, collection, response, options);
           }
-          collection.trigger('sync', collection, response, options);
+          collection.trigger('sync sync:dual', collection, response, options);
           return response;
         });
     },
@@ -65,10 +66,7 @@ module.exports = function (parent){
      *
      */
     fetchLocal: function (options) {
-      var collection = this,
-          firstSync = this.isNew(),
-          fullSync = _.get(options, 'fullSync', firstSync);
-
+      var collection = this, fullSync = _.get(options, 'fullSync', this.isNew());
       _.extend(options, { remote: false });
 
       return this.sync('read', this, options)
@@ -79,9 +77,11 @@ module.exports = function (parent){
           // special case
           if(_.get(options, ['idb', 'delayed']) > 0){
             collection.set(response, options);
+            collection.setTotals(options);
+            return collection.fetchRemote(options);
           }
-          // if first sync or there are read delayed records
-          if(firstSync && fullSync || _.get(options, ['idb', 'delayed']) > 0){
+          // if fullSync sync
+          if(fullSync){
             return collection.fetchRemote(options);
           }
           return response;
@@ -259,14 +259,17 @@ module.exports = function (parent){
       totals.idb = _.get(options, 'idb');
       if(_.has(options, 'xhr')){
         totals.remote = {
-          total: parseInt( options.xhr.getResponseHeader('X-WC-Total') )
+          total: parseInt( options.xhr.getResponseHeader('X-WC-Total'), 10 )
         };
       }
       _.set(this.state, ['totals'], totals);
+      this.trigger('pagination:totals', totals);
     },
 
     getTotalRecords: function(){
-      return _.get(this.state, ['totals', 'idb', 'total'], 0);
+      var localTotal   = _.get(this.state, ['totals', 'idb', 'total']);
+      var remoteTotal  = _.get(this.state, ['totals', 'remote', 'total']);
+      return _.max([this.length, localTotal, remoteTotal]);
     }
 
   });
