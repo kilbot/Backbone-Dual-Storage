@@ -47,7 +47,6 @@ module.exports = function (parent){
       var collection = this, success = _.get(options, 'success');
       options = _.extend({parse: true}, options, {success: undefined});
       var fetch = _.get(options, 'remote') ? this.fetchRemote : this.fetchLocal;
-      collection.trigger('request:dual', collection, fetch, options);
 
       return fetch.call(this, options)
         .then(function (response) {
@@ -57,7 +56,7 @@ module.exports = function (parent){
           if (success) {
             success.call(options.context, collection, response, options);
           }
-          collection.trigger('sync sync:dual', collection, response, options);
+          collection.trigger('sync', collection, response, options);
           return response;
         });
     },
@@ -77,7 +76,6 @@ module.exports = function (parent){
           // special case
           if(_.get(options, ['idb', 'delayed']) > 0){
             collection.set(response, options);
-            collection.setTotals(options);
             return collection.fetchRemote(options);
           }
           // if fullSync sync
@@ -97,16 +95,22 @@ module.exports = function (parent){
     /**
      * Get remote data and merge with local data on id
      * returns merged data
+     * - add triggers for infinite view
      */
     fetchRemote: function (options) {
       var collection = this;
       _.extend(options, { set: false, remote: true });
+      collection.trigger('request:remote', collection, null, options);
 
       return this.sync('read', this, options)
         .then(function (response) {
           response = collection.parse(response, options);
           options.index = options.index || 'id';
           return collection.saveLocal(response, options);
+        })
+        .then(function(response){
+          collection.trigger('sync:remote', collection, response, options);
+          return response;
         });
     },
 
@@ -123,7 +127,9 @@ module.exports = function (parent){
           fields: 'id',
           filter: {
             limit         : -1,
-            updated_at_min: last_update
+            updated_at_min: last_update,
+            order         : _.get(this.state, ['filter', 'order']),
+            orderby       : _.get(this.state, ['filter', 'orderby'])
           }
         },
         index: {
