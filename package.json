@@ -47,6 +47,7 @@
     "load-grunt-tasks": "^3.4.1",
     "lolex": "^1.4.0",
     "mocha": "^3.0.2",
+    "qs": "^6.3.0",
     "sinon": "^1.17.3",
     "sinon-chai": "^2.8.0",
     "webpack": "^1.12.13",

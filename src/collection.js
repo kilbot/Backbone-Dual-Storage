@@ -64,6 +64,7 @@ module.exports = function (parent){
     /**
      *
      */
+    /* jshint -W071 */
     fetchLocal: function (options) {
       var collection = this, fullSync = _.get(options, 'fullSync', this.isNew());
       _.extend(options, { remote: false });
@@ -76,6 +77,7 @@ module.exports = function (parent){
           // special case
           if(_.get(options, ['idb', 'delayed']) > 0){
             collection.set(response, options);
+            collection.setTotals(options);
             return collection.fetchRemote(options);
           }
           // if fullSync sync
@@ -91,6 +93,7 @@ module.exports = function (parent){
           return response;
         });
     },
+    /* jshint +W071 */
 
     /**
      * Get remote data and merge with local data on id
@@ -135,21 +138,21 @@ module.exports = function (parent){
         index: {
           keyPath: 'id',
           merge  : function (local, remote) {
-            if(!local || local.updated_at < remote.updated_at){
+            if(!local || _.get(local, 'updated_at') < _.get(remote, 'updated_at')){
               local = local || remote;
               local._state = collection.states.read;
             }
             return local;
           }
         },
-        success: undefined
+        success: undefined // no success function
       });
 
       return this.fetchRemote(options);
     },
 
     /**
-     *
+     * @todo: not_in read delayed
      */
     fetchUpdatedIds: function (options) {
       var collection = this;
@@ -168,17 +171,15 @@ module.exports = function (parent){
      *
      */
     fullSync: function(options){
+      options = options || {};
       var collection = this;
-      return this.fetchRemoteIds(null, options)
-        .then(function(response){
-          return collection.destroyLocal(null, {
-            index: 'id',
-            data: {
-              filter: {
-                not_in: _.map(response, 'id').join(',')
-              }
-            }
-          });
+      return this.destroyGarbage(options)
+        .then(function(){
+          return collection.fetchUpdated();
+        })
+        .then(function(){
+          collection.trigger('sync:fullSync', collection, null, options);
+          collection.setTotals(options);
         });
     },
 
@@ -204,6 +205,39 @@ module.exports = function (parent){
     /**
      *
      */
+    fetchUpdated: function(){
+      var collection = this;
+      return collection.fetchUpdatedIds()
+        .then(function(response){
+          var ids = _.intersection( _.map(response, 'id'), collection.map('id') );
+          if(_.isEmpty(ids)){
+            return;
+          }
+          return collection.fetchRemote({
+            data: {
+              filter: {
+                limit: -1,
+                'in': ids.join(',')
+              }
+            }
+          });
+        })
+        .then(function(response){
+          if(_.isEmpty(response)){
+            return;
+          }
+
+          // update collection, note: set won't clear _state attribute
+          var models = collection.set(response, { remove: false });
+          _.each(models, function(model){
+            model.set({ _state: undefined })
+          });
+        });
+    },
+
+    /**
+     *
+     */
     saveLocal: function(models, options){
       _.extend(options, {remote: false});
       return IDBCollection.prototype.save.call(this, models, options);
@@ -215,6 +249,26 @@ module.exports = function (parent){
     destroyLocal: function(models, options){
       _.extend(options, {remote: false});
       return IDBCollection.prototype.destroy.call(this, models, options);
+    },
+
+    /**
+     *
+     */
+    destroyGarbage: function(options){
+      options = options || {};
+      var collection = this;
+      return this.fetchRemoteIds(null, options)
+        .then(function(response){
+          return collection.destroyLocal(null, {
+            wait: true,
+            index: 'id',
+            data: {
+              filter: {
+                not_in: _.map(response, 'id').join(',')
+              }
+            }
+          });
+        });
     },
 
     /**
@@ -261,14 +315,21 @@ module.exports = function (parent){
     },
 
     setTotals: function(options){
-      var totals = {};
-      totals.idb = _.get(options, 'idb');
+      var totals = {
+        idb: _.get(options, 'idb')
+      };
+
+      // remote
       if(_.has(options, 'xhr')){
-        totals.remote = {
-          total: parseInt( options.xhr.getResponseHeader('X-WC-Total'), 10 )
-        };
+        var remote = _.parseInt(options.xhr.getResponseHeader('X-WC-Total'));
+        if(!_.isNaN(remote)){
+          totals.remote = {
+            total: remote
+          };
+        }
       }
-      _.set(this.state, ['totals'], totals);
+
+      _.set(this, ['state', 'totals'], totals);
       this.trigger('pagination:totals', totals);
     },
 

@@ -465,18 +465,24 @@ describe('Dual Collections', function () {
   });
 
   it('should automatically do a full sync on first fetch', function(done){
-
     var server = this.server;
 
     // first server response
     server.respondWith('GET', '/test', [200, {"Content-Type": "application/json"},
-      JSON.stringify([ {id: 1, foo: 'bar'}, {id: 2, foo: 'baz'} ])
+      JSON.stringify([ {id: 1, foo: 'bar'}, {id: 2, foo: 'baz', updated_at: '2016-12-10' } ])
     ]);
 
-    //  // mock server response
-    server.respondWith('GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
-      JSON.stringify([ { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 } ])
-    ]);
+    // mock server response
+    server.respondWith( 'GET', /test\/ids\?.*$/, function(xhr){
+      var response;
+      var updated_at_min = _.get( Qs.parse(xhr.url) , ['filter', 'updated_at_min'] );
+      if(_.isEmpty(updated_at_min)){
+        response = JSON.stringify([ { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 } ]);
+      } else {
+        response = JSON.stringify([]);
+      }
+      xhr.respond(200, '{"Content-Type": "application/json"}', response);
+    });
 
 
     var collection = new DualCollection();
@@ -488,7 +494,7 @@ describe('Dual Collections', function () {
         expect(collection).to.have.length(2);
 
         // full id sync happens in background
-        collection.on('sync', function(){
+        collection.on('sync:fullSync', function(){
           collection.db.count()
             .then(function(count){
               expect(count).equals(4);
@@ -519,42 +525,240 @@ describe('Dual Collections', function () {
 
   });
 
+  it('should set the correct local state after fetch with filter[limit]', function(done){
+    var collection = new DualCollection();
+
+    var data = [
+      {id: 1, foo: 'bar'},
+      {id: 2, foo: 'baz'},
+      {id: 3, _state: 'READ_FAILED'}
+    ];
+
+    collection.save(data, { set: false })
+    .then(function (response) {
+      expect(response).to.have.length(3);
+      collection.fetch({
+        data: {
+          filter: {
+            limit: 1
+          }
+        },
+        special: true,
+        error: done,
+        success: function(collection, response, options){
+          expect(collection.length).eqls(1);
+          var idb = _.get(collection, ['state', 'totals', 'idb']);
+          expect(idb.total).eqls(3);
+          expect(idb.delayed).eqls(1);
+          done();
+        }
+      });
+    })
+    .catch(done);
+  });
+
+  it('should set the correct local state after fetch with filter[q]', function(done){
+    var collection = new DualCollection();
+
+    var data = [
+      {id: 1, foo: 'bar'},
+      {id: 2, foo: 'baz'},
+      {id: 3, _state: 'READ_FAILED'}
+    ];
+
+    collection.save(data, { set: false })
+      .then(function (response) {
+        expect(response).to.have.length(3);
+        collection.fetch({
+          data: {
+            filter: {
+              limit: 1,
+              q: 'ba',
+              qFields: 'foo'
+            }
+          },
+          special: true,
+          error: done,
+          success: function(collection, response, options){
+            expect(collection.length).eqls(1);
+            var idb = _.get(collection, ['state', 'totals', 'idb']);
+            expect(idb.total).eqls(2);
+            expect(idb.delayed).eqls(1);
+            done();
+          }
+        });
+      })
+      .catch(done);
+
+  });
+
+  // it('should set the correct remote state after fetch with fullSync', function(done){
+  //   var server = this.server;
   //
-  //it('should remove garbage', function( done ){
+  //   // first server response
+  //   server.respondWith('GET', /^\/test\?.*$/, [200, {
+  //     "Content-Type": "application/json",
+  //     "X-WC-Total": "4"
+  //   },
+  //     JSON.stringify([ {id: 1, foo: 'bar'}, {id: 2, foo: 'baz'} ])
+  //   ]);
   //
-  //  // mock server response
-  //  var response = JSON.stringify({ nested: [ { id: 1 }, { id: 4 } ] });
-  //  this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
-  //    response
-  //  ]);
+  //   // mock server response
+  //   server.respondWith( 'GET', /test\/ids\?.*$/, function(xhr){
+  //     var response;
+  //     var updated_at_min = _.get( Qs.parse(xhr.url) , ['filter', 'updated_at_min'] );
+  //     if(_.isEmpty(updated_at_min)){
+  //       response = JSON.stringify([ { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 } ]);
+  //     } else {
+  //       response = JSON.stringify([]);
+  //     }
+  //     xhr.respond(200, '{"Content-Type": "application/json", "X-WC-Total": "4"}', response);
+  //   });
   //
-  //  var collection = new DualCollection();
-  //  collection.url = '/test';
-  //  collection.name = 'nested';
   //
-  //  collection.saveBatch([
-  //    { id: 1 },
-  //    { id: 2, _state: 'UPDATE_FAILED' },
-  //    { id: 3 },
-  //    { }
-  //  ]).then(function(){
-  //    expect( collection ).to.have.length(4);
+  //   var collection = new DualCollection();
+  //   collection.url = '/test';
   //
-  //    collection.fetchRemoteIds(null, {
-  //      remove: true,
-  //      error: done,
-  //      success: function(){
-  //        expect( collection ).to.have.length( 3 );
-  //        var create = collection.states.create;
-  //        var read = collection.states.read;
-  //        expect( collection.map('_state') ).eqls([ undefined, create, read ]);
-  //        done();
-  //      }
-  //    });
+  //   collection.fetch({
+  //     data: {
+  //       filter: {
+  //         limit: 2
+  //       }
+  //     },
+  //     special: true,
+  //     error: done,
+  //     success: function(collection, response, options){
+  //       expect(collection.length).eqls(2);
   //
-  //  });
+  //       var remote = _.get(collection, ['state', 'totals', 'remote']);
+  //       expect(remote.total).eqls(4);
   //
-  //});
+  //       // pre fullSync finish
+  //       var idb = _.get(collection, ['state', 'totals', 'idb']);
+  //       expect(idb.total).eqls(2);
+  //       expect(idb.delayed).eqls(0);
+  //
+  //       collection.on('pagination:totals', function(){
+  //
+  //         // post fullSync finish
+  //         var idb = _.get(collection, ['state', 'totals', 'idb']);
+  //         expect(idb.total).eqls(4);
+  //         expect(idb.delayed).eqls(2);
+  //
+  //         // remote still valid
+  //         var remote = _.get(collection, ['state', 'totals', 'remote']);
+  //         expect(remote.total).eqls(4);
+  //
+  //         done();
+  //       });
+  //
+  //     }
+  //   });
+  //
+  // });
+
+
+  //
+  it('should remove garbage on fullSync', function( done ){
+
+   // mock server response
+   var response = JSON.stringify({ nested: [ { id: 1 }, { id: 4 } ] });
+   this.server.respondWith( 'GET', /^\/test\/ids\?.*$/, [200, {"Content-Type": "application/json"},
+     response
+   ]);
+
+    // mock server response
+    this.server.respondWith( 'GET', /test\/ids\?.*$/, function(xhr){
+      var response;
+      var updated_at_min = _.get( Qs.parse(xhr.url) , ['filter', 'updated_at_min'] );
+      if(_.isEmpty(updated_at_min)){
+        response = JSON.stringify({ nested: [ { id: 1 }, { id: 4 } ] });
+      } else {
+        response = JSON.stringify({ nested: [] });
+      }
+      xhr.respond(200, '{"Content-Type": "application/json"}', response);
+    });
+
+   var collection = new DualCollection();
+   collection.url = '/test';
+   collection.name = 'nested';
+
+   collection.save([
+     { id: 1, updated_at: '2016-12-10' },
+     { id: 2, _state: 'UPDATE_FAILED' }, // garbage
+     { id: 3 }, // garbage
+     { _state: 'CREATE_FAILED' }
+   ]).then(function(){
+     expect( collection ).to.have.length(4);
+     return collection.fullSync();
+   })
+   .then(function(){
+     expect( collection ).to.have.length( 2 );
+     expect( collection.map('id') ).eqls([ 1, undefined ]);
+     var create = collection.states.create;
+     expect( collection.map('_state') ).eqls([ undefined, create ]);
+     return collection.count();
+   })
+   .then(function(count){
+     expect( count ).eqls( 3 );
+     done();
+   })
+   .catch(done);
+
+  });
+
+  //
+  it('should fetch updated records on fullSync', function( done ){
+
+    // mock server response
+    this.server.respondWith( 'GET', /test\/ids\?.*$/, function(xhr){
+      var response;
+      var updated_at_min = _.get( Qs.parse(xhr.url) , ['filter', 'updated_at_min'] );
+      if(_.isEmpty(updated_at_min)){
+        response = JSON.stringify([ { id: 1 }, { id: 2 } ]);
+      } else {
+        response = JSON.stringify([ { id: 1, updated_at: '2016-12-10' }, { id: 2, updated_at: '2016-12-10' } ]);
+      }
+      xhr.respond(200, '{"Content-Type": "application/json"}', response);
+    });
+
+    var response = JSON.stringify({
+      nested: [
+        { id: 1, title: 'noo', updated_at: '2016-12-10' },
+        { id: 2, title: 'nar', updated_at: '2016-12-10' }
+      ]
+    });
+    this.server.respondWith( 'GET', /test\?.*$/, [200, {"Content-Type": "application/json"},
+      response
+    ]);
+
+    var collection = new DualCollection();
+    collection.url = '/test';
+    collection.name = 'nested';
+
+    collection.save([
+      { id: 1, title: 'foo', updated_at: '2016-12-09' },
+      { id: 2, title: 'bar', _state: collection.states.update, updated_at: '2016-12-09' }, // data collision
+      { id: 3, title: 'baz', updated_at: '2016-12-09' }, // garbage
+      { title: 'boo', _state: collection.states.create }
+    ]).then(function(){
+      expect( collection ).to.have.length(4);
+      return collection.fullSync();
+    })
+    .then(function(){
+      expect( collection ).to.have.length( 3 );
+      expect( collection.map('id') ).eqls([ 1, 2, undefined ]);
+      expect( collection.map('_state') ).eqls([ undefined, undefined, collection.states.create ]);
+      expect( collection.map('title') ).eqls([ 'noo', 'nar', 'boo' ]);
+      return collection.count();
+    })
+    .then(function(count){
+      expect( count ).eqls( 3 );
+      done();
+    })
+    .catch(done);
+
+  });
 
   /**
    * Clear test database

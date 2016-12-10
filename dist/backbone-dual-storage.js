@@ -80,8 +80,8 @@ var app =
 	});
 
 	var modelSubClasses = {
-	  dual: __webpack_require__(12),
-	  idb: __webpack_require__(10)
+	  dual: __webpack_require__(11),
+	  idb: __webpack_require__(12)
 	};
 
 	var Model = bb.Model.extend({
@@ -216,7 +216,6 @@ var app =
 	      var collection = this, success = _.get(options, 'success');
 	      options = _.extend({parse: true}, options, {success: undefined});
 	      var fetch = _.get(options, 'remote') ? this.fetchRemote : this.fetchLocal;
-	      collection.trigger('request:dual', collection, fetch, options);
 
 	      return fetch.call(this, options)
 	        .then(function (response) {
@@ -226,7 +225,7 @@ var app =
 	          if (success) {
 	            success.call(options.context, collection, response, options);
 	          }
-	          collection.trigger('sync sync:dual', collection, response, options);
+	          collection.trigger('sync', collection, response, options);
 	          return response;
 	        });
 	    },
@@ -234,6 +233,7 @@ var app =
 	    /**
 	     *
 	     */
+	    /* jshint -W071 */
 	    fetchLocal: function (options) {
 	      var collection = this, fullSync = _.get(options, 'fullSync', this.isNew());
 	      _.extend(options, { remote: false });
@@ -262,20 +262,27 @@ var app =
 	          return response;
 	        });
 	    },
+	    /* jshint +W071 */
 
 	    /**
 	     * Get remote data and merge with local data on id
 	     * returns merged data
+	     * - add triggers for infinite view
 	     */
 	    fetchRemote: function (options) {
 	      var collection = this;
 	      _.extend(options, { set: false, remote: true });
+	      collection.trigger('request:remote', collection, null, options);
 
 	      return this.sync('read', this, options)
 	        .then(function (response) {
 	          response = collection.parse(response, options);
 	          options.index = options.index || 'id';
 	          return collection.saveLocal(response, options);
+	        })
+	        .then(function(response){
+	          collection.trigger('sync:remote', collection, response, options);
+	          return response;
 	        });
 	    },
 
@@ -292,27 +299,29 @@ var app =
 	          fields: 'id',
 	          filter: {
 	            limit         : -1,
-	            updated_at_min: last_update
+	            updated_at_min: last_update,
+	            order         : _.get(this.state, ['filter', 'order']),
+	            orderby       : _.get(this.state, ['filter', 'orderby'])
 	          }
 	        },
 	        index: {
 	          keyPath: 'id',
 	          merge  : function (local, remote) {
-	            if(!local || local.updated_at < remote.updated_at){
+	            if(!local || _.get(local, 'updated_at') < _.get(remote, 'updated_at')){
 	              local = local || remote;
 	              local._state = collection.states.read;
 	            }
 	            return local;
 	          }
 	        },
-	        success: undefined
+	        success: undefined // no success function
 	      });
 
 	      return this.fetchRemote(options);
 	    },
 
 	    /**
-	     *
+	     * @todo: not_in read delayed
 	     */
 	    fetchUpdatedIds: function (options) {
 	      var collection = this;
@@ -331,17 +340,15 @@ var app =
 	     *
 	     */
 	    fullSync: function(options){
+	      options = options || {};
 	      var collection = this;
-	      return this.fetchRemoteIds(null, options)
-	        .then(function(response){
-	          return collection.destroyLocal(null, {
-	            index: 'id',
-	            data: {
-	              filter: {
-	                not_in: _.map(response, 'id').join(',')
-	              }
-	            }
-	          });
+	      return this.destroyGarbage(options)
+	        .then(function(){
+	          return collection.fetchUpdated();
+	        })
+	        .then(function(){
+	          collection.trigger('sync:fullSync', collection, null, options);
+	          collection.setTotals(options);
 	        });
 	    },
 
@@ -367,6 +374,39 @@ var app =
 	    /**
 	     *
 	     */
+	    fetchUpdated: function(){
+	      var collection = this;
+	      return collection.fetchUpdatedIds()
+	        .then(function(response){
+	          var ids = _.intersection( _.map(response, 'id'), collection.map('id') );
+	          if(_.isEmpty(ids)){
+	            return;
+	          }
+	          return collection.fetchRemote({
+	            data: {
+	              filter: {
+	                limit: -1,
+	                'in': ids.join(',')
+	              }
+	            }
+	          });
+	        })
+	        .then(function(response){
+	          if(_.isEmpty(response)){
+	            return;
+	          }
+
+	          // update collection, note: set won't clear _state attribute
+	          var models = collection.set(response, { remove: false });
+	          _.each(models, function(model){
+	            model.set({ _state: undefined })
+	          });
+	        });
+	    },
+
+	    /**
+	     *
+	     */
 	    saveLocal: function(models, options){
 	      _.extend(options, {remote: false});
 	      return IDBCollection.prototype.save.call(this, models, options);
@@ -378,6 +418,26 @@ var app =
 	    destroyLocal: function(models, options){
 	      _.extend(options, {remote: false});
 	      return IDBCollection.prototype.destroy.call(this, models, options);
+	    },
+
+	    /**
+	     *
+	     */
+	    destroyGarbage: function(options){
+	      options = options || {};
+	      var collection = this;
+	      return this.fetchRemoteIds(null, options)
+	        .then(function(response){
+	          return collection.destroyLocal(null, {
+	            wait: true,
+	            index: 'id',
+	            data: {
+	              filter: {
+	                not_in: _.map(response, 'id').join(',')
+	              }
+	            }
+	          });
+	        });
 	    },
 
 	    /**
@@ -424,14 +484,21 @@ var app =
 	    },
 
 	    setTotals: function(options){
-	      var totals = {};
-	      totals.idb = _.get(options, 'idb');
+	      var totals = {
+	        idb: _.get(options, 'idb')
+	      };
+
+	      // remote
 	      if(_.has(options, 'xhr')){
-	        totals.remote = {
-	          total: parseInt( options.xhr.getResponseHeader('X-WC-Total'), 10 )
-	        };
+	        var remote = _.parseInt(options.xhr.getResponseHeader('X-WC-Total'));
+	        if(!_.isNaN(remote)){
+	          totals.remote = {
+	            total: remote
+	          };
+	        }
 	      }
-	      _.set(this.state, ['totals'], totals);
+
+	      _.set(this, ['state', 'totals'], totals);
 	      this.trigger('pagination:totals', totals);
 	    },
 
@@ -454,14 +521,11 @@ var app =
 	var _ = __webpack_require__(3);
 	var Radio = __webpack_require__(6);
 	var IDBAdapter = __webpack_require__(7);
-	var IDBModel = __webpack_require__(10);
-	var sync = __webpack_require__(11);
+	var sync = __webpack_require__(10);
 
 	module.exports = function (parent){
 
 	  var IDBCollection = parent.extend({
-
-	    model: IDBModel,
 
 	    name       : 'store',
 	    storePrefix: 'wc_pos_',
@@ -533,7 +597,6 @@ var app =
 
 	      options.success = function(resp) {
 	        if(wait && !options.attrsArray) {
-	          collection.isNew(true);
 	          collection.reset();
 	        }
 	        if(wait && options.attrsArray) {
@@ -1085,7 +1148,9 @@ var app =
 	    var self = this;
 	    return put.call(this, data, options)
 	      .then(function (resp) {
-	        return get.call(self, resp);
+	        options.index = undefined;
+	        options.objectStore = undefined;
+	        return get.call(self, resp, options);
 	      });
 	  },
 
@@ -1277,6 +1342,7 @@ var app =
 	      limit       = _.get(options, ['data', 'filter', 'limit'], -1),
 	      start       = _.get(options, ['data', 'filter', 'offset'], 0),
 	      order       = _.get(options, ['data', 'filter', 'order'], 'ASC'),
+	      orderby     = _.get(options, ['data', 'filter', 'orderby']),
 	      direction   = order === 'DESC' ? consts.PREV : consts.NEXT,
 	      query       = _.get(options, ['data', 'filter', 'q']),
 	      keyPath     = options.index || this.opts.keyPath,
@@ -1297,7 +1363,7 @@ var app =
 	    }
 
 	    return new Promise(function (resolve, reject) {
-	      var records = [], delayed = 0;
+	      var records = [], delayed = 0, excluded = 0;
 	      var request = (keyPath === self.opts.keyPath) ?
 	        objectStore.openCursor(range, direction) :
 	        objectStore.index(keyPath).openCursor(range, direction);
@@ -1314,12 +1380,24 @@ var app =
 	            (!query || self._match(query, cursor.value, keyPath, options))
 	          ) {
 	            records.push(cursor.value);
+	          } else if (exclude && _.includes(exclude, cursor.value[keyPath])){
+	            excluded++;
 	          }
 	          return cursor.continue();
 	        }
-	        _.set(options, 'idb.total', records.length);
-	        _.set(options, 'idb.delayed', delayed);
+	        _.set(options, 'idb', {
+	          total: records.length + excluded,
+	          delayed: delayed
+	        });
+	        // _.set(options, 'idb.total', records.length + excluded);
+	        // _.set(options, 'idb.delayed', delayed);
 	        end = limit !== -1 ? start + limit : records.length;
+
+	        // temp fix for lodash v3 compatibility
+	        records = _.isFunction(_.sortByOrder) ?
+	          _.sortByOrder(records, orderby, order.toLowerCase()) :
+	          _.orderBy(records, orderby, order.toLowerCase());
+
 	        resolve(_.slice(records, start, end));
 	      };
 
@@ -1377,7 +1455,7 @@ var app =
 	  },
 
 	  _match: function (query, json, keyPath, options) {
-	    var fields = _.get(options, ['data', 'filter', 'fields'], keyPath);
+	    var fields = _.get(options, ['data', 'filter', 'qFields'], keyPath);
 	    return this.opts.matchMaker.call(this, json, query, {fields: fields});
 	  }
 
@@ -1529,22 +1607,6 @@ var app =
 /* 10 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var sync = __webpack_require__(11);
-
-	module.exports = function (parent){
-
-	  var IDBModel = parent.extend({
-	    sync: sync
-	  });
-
-	  return IDBModel;
-
-	};
-
-/***/ },
-/* 11 */
-/***/ function(module, exports, __webpack_require__) {
-
 	var bb = __webpack_require__(1);
 
 	/* jshint -W074 */
@@ -1560,6 +1622,9 @@ var app =
 	    key = options.index ? entity.get(options.index) : entity.id;
 	    data = entity.toJSON();
 	  }
+
+	  // trigger request
+	  entity.trigger('request', entity, db, options);
 
 	  return db.open()
 	    .then(function () {
@@ -1590,7 +1655,7 @@ var app =
 	/* jshint +W074 */
 
 /***/ },
-/* 12 */
+/* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var _ = __webpack_require__(3);
@@ -1737,6 +1802,22 @@ var app =
 	  });
 
 	  return DualModel;
+
+	};
+
+/***/ },
+/* 12 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var sync = __webpack_require__(10);
+
+	module.exports = function (parent){
+
+	  var IDBModel = parent.extend({
+	    sync: sync
+	  });
+
+	  return IDBModel;
 
 	};
 
