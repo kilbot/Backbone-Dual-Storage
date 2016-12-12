@@ -186,7 +186,8 @@ describe('Dual Collections', function () {
         expect(options.special).to.be.true;
         done();
       }
-    });
+    })
+    .catch(done);
 
   });
 
@@ -481,7 +482,7 @@ describe('Dual Collections', function () {
       } else {
         response = JSON.stringify([]);
       }
-      xhr.respond(200, '{"Content-Type": "application/json"}', response);
+      xhr.respond(200, {'Content-Type': 'application/json'}, response);
     });
 
 
@@ -592,72 +593,6 @@ describe('Dual Collections', function () {
 
   });
 
-  // it('should set the correct remote state after fetch with fullSync', function(done){
-  //   var server = this.server;
-  //
-  //   // first server response
-  //   server.respondWith('GET', /^\/test\?.*$/, [200, {
-  //     "Content-Type": "application/json",
-  //     "X-WC-Total": "4"
-  //   },
-  //     JSON.stringify([ {id: 1, foo: 'bar'}, {id: 2, foo: 'baz'} ])
-  //   ]);
-  //
-  //   // mock server response
-  //   server.respondWith( 'GET', /test\/ids\?.*$/, function(xhr){
-  //     var response;
-  //     var updated_at_min = _.get( Qs.parse(xhr.url) , ['filter', 'updated_at_min'] );
-  //     if(_.isEmpty(updated_at_min)){
-  //       response = JSON.stringify([ { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 } ]);
-  //     } else {
-  //       response = JSON.stringify([]);
-  //     }
-  //     xhr.respond(200, '{"Content-Type": "application/json", "X-WC-Total": "4"}', response);
-  //   });
-  //
-  //
-  //   var collection = new DualCollection();
-  //   collection.url = '/test';
-  //
-  //   collection.fetch({
-  //     data: {
-  //       filter: {
-  //         limit: 2
-  //       }
-  //     },
-  //     special: true,
-  //     error: done,
-  //     success: function(collection, response, options){
-  //       expect(collection.length).eqls(2);
-  //
-  //       var remote = _.get(collection, ['state', 'totals', 'remote']);
-  //       expect(remote.total).eqls(4);
-  //
-  //       // pre fullSync finish
-  //       var idb = _.get(collection, ['state', 'totals', 'idb']);
-  //       expect(idb.total).eqls(2);
-  //       expect(idb.delayed).eqls(0);
-  //
-  //       collection.on('pagination:totals', function(){
-  //
-  //         // post fullSync finish
-  //         var idb = _.get(collection, ['state', 'totals', 'idb']);
-  //         expect(idb.total).eqls(4);
-  //         expect(idb.delayed).eqls(2);
-  //
-  //         // remote still valid
-  //         var remote = _.get(collection, ['state', 'totals', 'remote']);
-  //         expect(remote.total).eqls(4);
-  //
-  //         done();
-  //       });
-  //
-  //     }
-  //   });
-  //
-  // });
-
-
   //
   it('should remove garbage on fullSync', function( done ){
 
@@ -676,7 +611,7 @@ describe('Dual Collections', function () {
       } else {
         response = JSON.stringify({ nested: [] });
       }
-      xhr.respond(200, '{"Content-Type": "application/json"}', response);
+      xhr.respond(200, {'Content-Type': 'application/json'}, response);
     });
 
    var collection = new DualCollection();
@@ -719,7 +654,7 @@ describe('Dual Collections', function () {
       } else {
         response = JSON.stringify([ { id: 1, updated_at: '2016-12-10' }, { id: 2, updated_at: '2016-12-10' } ]);
       }
-      xhr.respond(200, '{"Content-Type": "application/json"}', response);
+      xhr.respond(200, {'Content-Type': 'application/json'}, response);
     });
 
     var response = JSON.stringify({
@@ -754,6 +689,213 @@ describe('Dual Collections', function () {
     })
     .then(function(count){
       expect( count ).eqls( 3 );
+      done();
+    })
+    .catch(done);
+
+  });
+
+  /**
+   *
+   */
+  it('should set the right totals on initial fetch', function(done){
+
+    var server = this.server;
+
+    var data = [
+      { id: 11, title: 'Foo', updated_at: '2016-12-11' },
+      { id: 36, title: 'Bar', updated_at: '2016-11-11' },
+      { id: 45, title: 'Baz', updated_at: '2016-10-11' },
+      { id: 68, title: 'Noo', updated_at: '2016-12-01' },
+      { id: 99, title: 'Nar', updated_at: '2016-12-11' }
+    ];
+
+    // fetch records
+    server.respondWith( 'GET', /^\/test\?.*$/, function(xhr){
+      var response;
+      var headers = {'Content-Type': 'application/json'};
+      response = JSON.stringify( _.slice(data, 0, 2) );
+      _.set(headers, 'X-WC-Total', '5');
+      xhr.respond(200, headers, response);
+    });
+
+    // fetch ids response
+    server.respondWith( 'GET', /test\/ids\?.*$/, function(xhr){
+      var response;
+      var headers = {'Content-Type': 'application/json'};
+      var updated_at_min = _.get( Qs.parse(xhr.url) , ['filter', 'updated_at_min'] );
+      if(_.isEmpty(updated_at_min)){
+        response = JSON.stringify( _.map(data, function(obj){ return {id: obj.id} }) ); // all ids
+        _.set(headers, 'X-WC-Total', '5');
+      } else {
+        response = JSON.stringify([]); // updated ids
+        _.set(headers, 'X-WC-Total', '0');
+      }
+      xhr.respond(200, headers, response);
+    });
+
+    var collection = new DualCollection();
+    collection.url = '/test';
+
+    collection.fetch({
+      data: {
+        filter: {
+          limit: 2
+        }
+      }
+    })
+    .then(function(){
+      var totals = _.get(collection, ['state', 'totals']);
+      // post fullSync finish
+      var idb = _.get(collection, ['state', 'totals', 'idb']);
+      expect(idb.total).eqls(2);
+      expect(idb.delayed).eqls(0);
+
+      // remote still valid
+      var remote = _.get(collection, ['state', 'totals', 'remote']);
+      expect(remote.total).eqls(5);
+
+      // fullSync finished
+      collection.on('pagination:totals', function(){
+
+        // post fullSync finish
+        var idb = _.get(collection, ['state', 'totals', 'idb']);
+        expect(idb.total).eqls(5);
+        expect(idb.delayed).eqls(3);
+
+        // remote still valid
+        var remote = _.get(collection, ['state', 'totals', 'remote']);
+        expect(remote.total).eqls(5);
+
+        expect(collection.hasMore()).to.be.true;
+
+        done();
+      });
+    })
+    .catch(done);
+
+  });
+
+  /**
+   *
+   */
+  it('should set the right totals on after filtered fetch', function(done){
+
+    var server = this.server;
+
+    var data = [
+      { id: 1, title: 'Foo', updated_at: '2016-12-11' },
+      { id: 3, title: 'Bar', updated_at: '2016-11-11' },
+      { id: 4, title: 'Baz', updated_at: '2016-10-11' },
+      { id: 6, title: 'Noo', updated_at: '2016-12-01' },
+      { id: 9, title: 'Nar', updated_at: '2016-12-11' }
+    ];
+
+    // fetch records
+    server.respondWith( 'GET', /^\/test\?.*$/, function(xhr){
+      var response;
+      var headers = {'Content-Type': 'application/json'};
+      var not_in = _.get( Qs.parse(xhr.url) , ['filter', 'not_in'] );
+      if(_.includes(not_in, 4)){
+        response = JSON.stringify([]);
+        _.set(headers, 'X-WC-Total', '0');
+      } else {
+        response = JSON.stringify([{ id: 4, title: 'Baz', updated_at: '2016-10-11' }]);
+        _.set(headers, 'X-WC-Total', '1');
+      }
+      xhr.respond(200, headers, response);
+    });
+
+    var collection = new DualCollection();
+    collection.url = '/test';
+
+    // save a collection after first fetch
+    collection.save([
+      { id: 1, title: 'Foo', updated_at: '2016-12-11' },
+      { id: 3, title: 'Bar', updated_at: '2016-11-11' },
+      { id: 4, _state: collection.states.read },
+      { id: 6, _state: collection.states.read },
+      { id: 9, _state: collection.states.read }
+    ])
+    .then(function(response){
+      expect(collection.isNew()).to.be.false;
+      expect(response).to.have.length(5);
+      expect(collection).to.have.length(5);
+
+      // remove read delayed
+      collection.remove( collection.where({ _state: collection.states.read }) );
+      expect(collection).to.have.length(2);
+
+      return collection.fetch({
+        data: {
+          filter: {
+            limit: 2,
+            q: 'ba',
+            qFields: 'title'
+          }
+        }
+      });
+    })
+    .then(function(response){
+      expect(response).to.have.length(1);
+      expect(collection).to.have.length(1);
+
+      var idb = _.get(collection, ['state', 'totals', 'idb']);
+      expect(idb.total).eqls(1);
+      expect(idb.delayed).eqls(3);
+
+      expect(collection.hasMore()).to.be.true;
+
+      // infinite view collection.appendNextPage()
+      return collection.fetch({
+        index: 'id',
+        remove: false,
+        data: {
+          filter: {
+            limit: 2,
+            q: [{
+              type: 'string',
+              query: 'ba'
+            }],
+            qFields: ['title'],
+            not_in: '3'
+          }
+        }
+      });
+    })
+    .then(function(response){
+      expect(response).to.have.length(1);
+      expect(collection).to.have.length(2);
+      expect(collection.map('id')).eqls([3, 4]);
+
+      return collection.fetch({
+        index: 'id',
+        remove: false,
+        data: {
+          filter: {
+            limit: 2,
+            q: [{
+              type: 'string',
+              query: 'ba'
+            }],
+            qFields: ['title'],
+            not_in: '3, 4'
+          }
+        }
+      });
+    })
+    .then(function(response){
+      expect(response).to.have.length(0);
+
+      var idb = _.get(collection, ['state', 'totals', 'idb']);
+      expect(idb.total).eqls(0);
+      expect(idb.delayed).eqls(2);
+
+      var remote = _.get(collection, ['state', 'totals', 'remote']);
+      expect(remote.total).eqls(0);
+
+      expect(collection.hasMore()).to.be.false;
+
       done();
     })
     .catch(done);

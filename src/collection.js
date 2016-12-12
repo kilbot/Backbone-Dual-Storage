@@ -75,9 +75,7 @@ module.exports = function (parent){
             return collection.fetchReadDelayed(response);
           }
           // special case
-          if(_.get(options, ['idb', 'delayed']) > 0){
-            collection.set(response, options);
-            collection.setTotals(options);
+          if(_.get(options, ['idb', 'delayed']) > 0) {
             return collection.fetchRemote(options);
           }
           // if fullSync sync
@@ -109,6 +107,11 @@ module.exports = function (parent){
         .then(function (response) {
           response = collection.parse(response, options);
           options.index = options.index || 'id';
+          var filter = _.get(options, ['data', 'filter']);
+          if(filter){
+            delete filter['in'];
+            delete filter.not_in;
+          }
           return collection.saveLocal(response, options);
         })
         .then(function(response){
@@ -230,7 +233,7 @@ module.exports = function (parent){
           // update collection, note: set won't clear _state attribute
           var models = collection.set(response, { remove: false });
           _.each(models, function(model){
-            model.set({ _state: undefined })
+            model.set({ _state: undefined });
           });
         });
     },

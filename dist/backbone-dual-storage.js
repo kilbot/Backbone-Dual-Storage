@@ -244,9 +244,13 @@ var app =
 	            return collection.fetchReadDelayed(response);
 	          }
 	          // special case
-	          if(_.get(options, ['idb', 'delayed']) > 0){
-	            collection.set(response, options);
-	            collection.setTotals(options);
+	          // if(
+	          //   _.get(options, ['idb', 'delayed']) > 0 &&
+	          //   _.get(collection, ['state', 'totals', 'remote', 'total']) !== 0
+	          // ){
+	            // collection.set(response, options); // response is 0!?
+	            // collection.setTotals(options);
+	          if(_.get(options, ['idb', 'delayed']) > 0) {
 	            return collection.fetchRemote(options);
 	          }
 	          // if fullSync sync
@@ -278,6 +282,11 @@ var app =
 	        .then(function (response) {
 	          response = collection.parse(response, options);
 	          options.index = options.index || 'id';
+	          var filter = _.get(options, ['data', 'filter']);
+	          if(filter){
+	            delete filter['in'];
+	            delete filter.not_in;
+	          }
 	          return collection.saveLocal(response, options);
 	        })
 	        .then(function(response){
@@ -399,7 +408,7 @@ var app =
 	          // update collection, note: set won't clear _state attribute
 	          var models = collection.set(response, { remove: false });
 	          _.each(models, function(model){
-	            model.set({ _state: undefined })
+	            model.set({ _state: undefined });
 	          });
 	        });
 	    },
@@ -1150,6 +1159,12 @@ var app =
 	      .then(function (resp) {
 	        options.index = undefined;
 	        options.objectStore = undefined;
+	        // see bug test
+	        var filter = _.get(options, ['data', 'filter']);
+	        if(filter){
+	          delete filter['in'];
+	          delete filter.not_in;
+	        }
 	        return get.call(self, resp, options);
 	      });
 	  },
@@ -1361,6 +1376,11 @@ var app =
 	    if (page && limit !== -1) {
 	      start = (page - 1) * limit;
 	    }
+
+	    // in & not_in can be strings eg: '1,2,3' for WC REST API
+	    // make sure these are turned into an array
+	    include = _.isString(include) ? _.map(include.split(','), _.parseInt) : include;
+	    exclude = _.isString(exclude) ? _.map(exclude.split(','), _.parseInt) : exclude;
 
 	    return new Promise(function (resolve, reject) {
 	      var records = [], delayed = 0, excluded = 0;
