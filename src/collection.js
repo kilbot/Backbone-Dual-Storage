@@ -48,8 +48,17 @@ module.exports = function (parent){
       options = _.extend({parse: true}, options, {success: undefined});
       var fetch = _.get(options, 'remote') ? this.fetchRemote : this.fetchLocal;
 
+      if(_.has(this.currentFetchOptions, 'xhr')){
+        this.currentFetchOptions.xhr.abort();
+      }
+
+      this.currentFetchOptions = options;
+
       return fetch.call(this, options)
         .then(function (response) {
+          if(_.get(options, ['xhr', 'statusText']) === 'abort'){
+            return;
+          }
           var method = options.reset ? 'reset' : 'set';
           collection[method](response, options);
           collection.setTotals(options);
@@ -76,6 +85,7 @@ module.exports = function (parent){
           }
           // special case
           if(_.get(options, ['idb', 'delayed']) > 0) {
+            collection.set(response, options); // needed to clear empty
             return collection.fetchRemote(options);
           }
           // if fullSync sync

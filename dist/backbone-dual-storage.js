@@ -217,8 +217,17 @@ var app =
 	      options = _.extend({parse: true}, options, {success: undefined});
 	      var fetch = _.get(options, 'remote') ? this.fetchRemote : this.fetchLocal;
 
+	      if(_.has(this.currentFetchOptions, 'xhr')){
+	        this.currentFetchOptions.xhr.abort();
+	      }
+
+	      this.currentFetchOptions = options;
+
 	      return fetch.call(this, options)
 	        .then(function (response) {
+	          if(_.get(options, ['xhr', 'statusText']) === 'abort'){
+	            return;
+	          }
 	          var method = options.reset ? 'reset' : 'set';
 	          collection[method](response, options);
 	          collection.setTotals(options);
@@ -244,13 +253,8 @@ var app =
 	            return collection.fetchReadDelayed(response);
 	          }
 	          // special case
-	          // if(
-	          //   _.get(options, ['idb', 'delayed']) > 0 &&
-	          //   _.get(collection, ['state', 'totals', 'remote', 'total']) !== 0
-	          // ){
-	            // collection.set(response, options); // response is 0!?
-	            // collection.setTotals(options);
 	          if(_.get(options, ['idb', 'delayed']) > 0) {
+	            collection.set(response, options); // needed to clear empty
 	            return collection.fetchRemote(options);
 	          }
 	          // if fullSync sync
@@ -537,11 +541,11 @@ var app =
 	  var IDBCollection = parent.extend({
 
 	    name       : 'store',
-	    storePrefix: 'wc_pos_',
 
 	    constructor: function(){
 	      parent.apply(this, arguments);
 	      this.db = new IDBAdapter({ collection: this });
+	      this.versionCheck();
 	    },
 
 	    sync: sync,
@@ -1070,21 +1074,21 @@ var app =
 	  options = options || {};
 	  this.parent = options.collection;
 	  this.opts = _.defaults(_.pick(this.parent, _.keys(this.default)), this.default);
-	  this.opts.storeName = this.parent.name || this.default.storeName;
-	  this.opts.dbName = this.opts.storePrefix + this.opts.storeName;
+	  this.opts.name = this.parent.name || this.default.name;
+	  this.opts.dbName = this.opts.localDBPrefix + this.opts.name;
 	}
 
 	IDBAdapter.prototype = {
 
 	  default: {
-	    storeName    : 'store',
-	    storePrefix  : 'Prefix_',
-	    dbVersion    : 1,
-	    keyPath      : 'id',
-	    autoIncrement: true,
-	    indexes      : [],
-	    matchMaker   : matchMaker,
-	    onerror      : function (options) {
+	    name          : 'store',
+	    localDBPrefix : 'Prefix_',
+	    dbVersion     : 1,
+	    keyPath       : 'id',
+	    autoIncrement : true,
+	    indexes       : [],
+	    matchMaker    : matchMaker,
+	    onerror       : function (options) {
 	      options = options || {};
 	      var err = new Error(options._error.message);
 	      err.code = event.target.errorCode;
@@ -1126,7 +1130,7 @@ var app =
 	        };
 
 	        request.onupgradeneeded = function (event) {
-	          var store = event.currentTarget.result.createObjectStore(self.opts.storeName, self.opts);
+	          var store = event.currentTarget.result.createObjectStore(self.opts.name, self.opts);
 
 	          self.opts.indexes.forEach(function (index) {
 	            store.createIndex(index.name, index.keyPath, {
@@ -1175,11 +1179,11 @@ var app =
 	  },
 
 	  getTransaction: function (access) {
-	    return this.db.transaction([this.opts.storeName], access);
+	    return this.db.transaction([this.opts.name], access);
 	  },
 
 	  getObjectStore: function (access) {
-	    return this.getTransaction(access).objectStore(this.opts.storeName);
+	    return this.getTransaction(access).objectStore(this.opts.name);
 	  },
 
 	  count: function (options) {
