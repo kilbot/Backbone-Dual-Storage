@@ -212,6 +212,7 @@ var app =
 	    /**
 	     *
 	     */
+	    /* jshint -W071 */
 	    fetch: function (options) {
 	      var collection = this, success = _.get(options, 'success');
 	      options = _.extend({parse: true}, options, {success: undefined});
@@ -238,6 +239,7 @@ var app =
 	          return response;
 	        });
 	    },
+	    /* jshint +W071 */
 
 	    /**
 	     *
@@ -250,7 +252,7 @@ var app =
 	      return this.sync('read', this, options)
 	        .then(function (response) {
 	          if(_.size(response) > 0){
-	            return collection.fetchReadDelayed(response);
+	            return collection.fetchReadDelayed(response, options);
 	          }
 	          // special case
 	          if(_.get(options, ['idb', 'delayed']) > 0) {
@@ -368,11 +370,18 @@ var app =
 	    /**
 	     *
 	     */
-	    fetchReadDelayed: function(response){
+	    fetchReadDelayed: function(response, options){
 	      var delayed = this.getDelayed('read', response);
 	      if(!_.isEmpty(delayed)){
 	        var ids = _.map(delayed, 'id');
-	        return this.fetchRemote({ data: { filter: { 'in': ids.join(',') } } })
+	        _.extend(options, {
+	          data: {
+	            filter: {
+	              'in': ids.join(',')
+	            }
+	          }
+	        });
+	        return this.fetchRemote(options)
 	          .then(function(resp){
 	            _.each(resp, function(attrs){
 	              var key = _.findKey(response, {id: attrs.id});
