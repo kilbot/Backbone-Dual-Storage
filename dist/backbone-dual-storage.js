@@ -1170,6 +1170,7 @@ var app =
 	    var self = this;
 	    return put.call(this, data, options)
 	      .then(function (resp) {
+	        resp = resp || [];
 	        options.index = undefined;
 	        options.objectStore = undefined;
 	        // see bug test
@@ -1220,7 +1221,7 @@ var app =
 	    var self = this, keyPath = this.opts.keyPath;
 
 	    // merge on index keyPath
-	    if (options.index) {
+	    if (options.index && !options.mergeBatch) {
 	      return this.merge(data, options);
 	    }
 
@@ -1324,13 +1325,31 @@ var app =
 	  putBatch: function (dataArray, options) {
 	    options = options || {};
 	    options.objectStore = options.objectStore || this.getObjectStore(consts.READ_WRITE);
+	    // var put = this.put.bind(this), batch = [];
 	    var batch = [];
 
+	    // more performant batch merge
+	    if (options.index && !options.mergeBatch) {
+	      return this.mergeBatch(dataArray, options);
+	    }
+
+	    // all at once
 	    _.each(dataArray, function (data) {
 	      batch.push(this.put(data, options));
 	    }.bind(this));
 
 	    return Promise.all(batch);
+
+	    // chain promises
+	    // return dataArray.reduce(function(promise, data) {
+	    //   return promise.then(function(){
+	    //     return put(data, options)
+	    //       .then(function(resp){
+	    //         batch.push(resp);
+	    //         return batch;
+	    //       });
+	    //   });
+	    // }, Promise.resolve([]));
 	  },
 
 	  /**
@@ -1490,6 +1509,44 @@ var app =
 	  _match: function (query, json, keyPath, options) {
 	    var fields = _.get(options, ['data', 'filter', 'qFields'], keyPath);
 	    return this.opts.matchMaker.call(this, json, query, {fields: fields});
+	  },
+
+	  mergeBatch: function(dataArray, options) {
+	    options = options || {};
+	    options.mergeBatch = true;
+	    options.objectStore = undefined;
+
+	    var keyPath = options.index || this.opts.keyPath;
+	    var primaryKey = this.opts.keyPath;
+	    var batch = [], putBatch = [];
+	    var self = this;
+
+	    var mergeFn = function (local, remote, keyPath) {
+	      if (local) {
+	        remote[keyPath] = local[keyPath];
+	      }
+	      return remote;
+	    };
+
+	    if (_.isObject(keyPath)) {
+	      mergeFn = keyPath.merge || mergeFn;
+	      keyPath = keyPath.keyPath;
+	    }
+
+	    _.each(dataArray, function (data) {
+	      var key = data[keyPath];
+	      batch.push(
+	        this.get(key, options)
+	          .then(function (local) {
+	            putBatch.push(mergeFn(local, data, primaryKey));
+	          })
+	      );
+	    }.bind(this));
+
+	    return Promise.all(batch)
+	      .then(function () {
+	        return self.putBatch(putBatch, options);
+	      });
 	  }
 
 	};

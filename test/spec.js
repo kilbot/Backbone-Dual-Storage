@@ -902,6 +902,60 @@ describe('Dual Collections', function () {
 
   });
 
+  it('should be performant with large databases', function(done){
+    this.timeout(9000);
+
+    var server = this.server;
+    var largeDB = [];
+    for(var i = 1; i <= 10000; i++ ){
+      largeDB.push({ id: i });
+    }
+
+    // first server response
+    server.respondWith('GET', '/test', [200, {"Content-Type": "application/json"},
+      JSON.stringify([ {id: 1, foo: 'bar'}, {id: 2, foo: 'baz', updated_at: '2017-01-08' } ])
+    ]);
+
+    // mock server response
+    server.respondWith( 'GET', /test\/ids\?.*$/, function(xhr){
+      var response;
+      var updated_at_min = _.get( Qs.parse(xhr.url) , ['filter', 'updated_at_min'] );
+      if(_.isEmpty(updated_at_min)){
+        response = JSON.stringify(largeDB);
+      } else {
+        response = JSON.stringify([]);
+      }
+      xhr.respond(200, {'Content-Type': 'application/json'}, response);
+    });
+
+
+    var collection = new DualCollection();
+    collection.url = '/test';
+
+    var start = Date.now();
+
+    collection.fetch()
+      .then(function(response){
+        expect(response).to.have.length(2);
+        expect(collection).to.have.length(2);
+
+        // full id sync happens in background
+        collection.on('sync:fullSync', function(){
+          var time = Date.now() - start;
+          console.log(time);
+
+          collection.db.count()
+            .then(function(count){
+              expect(count).equals(largeDB.length);
+              done();
+            })
+            .catch(done);
+        });
+
+      })
+      .catch(done);
+  });
+
   /**
    * Clear test database
    */
