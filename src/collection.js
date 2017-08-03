@@ -13,7 +13,7 @@ module.exports = function (parent){
 
     indexes: [
       {name: 'id', keyPath: 'id', unique: true},
-      {name: 'updated_at', keyPath: 'updated_at'},
+      {name: 'date_modified', keyPath: 'date_modified'},
       {name: '_state', keyPath: '_state'}
     ],
 
@@ -135,17 +135,17 @@ module.exports = function (parent){
     /**
      *
      */
-    fetchRemoteIds: function (last_update, options) {
+    fetchRemoteIds: function (date_modified, options) {
       options = options || {};
-      var collection = this, url = _.result(this, 'url') + '/ids';
+      var collection = this;
 
       _.extend(options, {
-        url   : url,
         data  : {
           fields: 'id',
+          modified_after  : date_modified,
           filter: {
             limit         : -1,
-            updated_at_min: last_update,
+            updated_at_min: date_modified,
             order         : _.get(this.state, ['filter', 'order']),
             orderby       : _.get(this.state, ['filter', 'orderby'])
           }
@@ -153,7 +153,7 @@ module.exports = function (parent){
         index: {
           keyPath: 'id',
           merge  : function (local, remote) {
-            if(!local || _.get(local, 'updated_at') < _.get(remote, 'updated_at')){
+            if(!local || _.get(local, 'date_modified') < _.get(remote, 'date_modified')){
               local = local || remote;
               local._state = collection.states.read;
             }
@@ -172,13 +172,13 @@ module.exports = function (parent){
     fetchUpdatedIds: function (options) {
       var collection = this;
       return this.fetchLocal({
-        index    : 'updated_at',
+        index    : 'date_modified',
         data     : { filter: { limit: 1, order: 'DESC' } },
         fullSync : false
       })
       .then(function (response) {
-        var last_update = _.get(response, [0, 'updated_at']);
-        return collection.fetchRemoteIds(last_update, options);
+        var date_modified = _.get(response, [0, 'date_modified']);
+        return collection.fetchRemoteIds(date_modified, options);
       });
     },
 
