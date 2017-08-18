@@ -80,19 +80,21 @@ module.exports = function (parent){
       var model = this, success = options.success;
       _.extend(options, { success: undefined });
 
-      if (options.patch && !options.attrs) {
-        options.attrs = this.prepareRemoteJSON(attrs);
-      }
+      // if (options.patch && !options.attrs) {
+      //   options.attrs = this.prepareRemoteJSON(attrs);
+      // }
 
       return model.syncLocal(method, model, options)
         .then(function(){
           return model.syncRemote(method, model, options);
         })
         .then(function(resp){
-          resp = model.parse(resp, options);
-          resp._state = undefined;
-          _.extend(options, { success: success });
-          return model.saveLocal(resp, options);
+          if(resp){
+            resp = model.parse(resp, options);
+            resp._state = undefined;
+            _.extend(options, { success: success });
+            return model.saveLocal(resp, options);
+          }
         });
     },
 
@@ -113,23 +115,23 @@ module.exports = function (parent){
         });
     },
 
-    toJSON: function (options) {
-      options = options || {};
-      var json = IDBModel.prototype.toJSON.apply(this, arguments);
-      if (options.remote && this.name) {
-        json = this.prepareRemoteJSON(json);
-      }
-      return json;
-    },
+    // toJSON: function (options) {
+    //   options = options || {};
+    //   var json = IDBModel.prototype.toJSON.apply(this, arguments);
+    //   if (options.remote && this.name) {
+    //     json = this.prepareRemoteJSON(json);
+    //   }
+    //   return json;
+    // },
 
-    prepareRemoteJSON: function (json) {
-      if(_.has(json, '_state')){
-        delete json._state;
-      }
-      var nested = {};
-      nested[this.name] = json;
-      return nested;
-    },
+    // prepareRemoteJSON: function (json) {
+    //   if(_.has(json, '_state')){
+    //     delete json._state;
+    //   }
+    //   var nested = {};
+    //   nested[this.name] = json;
+    //   return nested;
+    // },
 
     parse: function (resp, options) {
       options = options || {};
